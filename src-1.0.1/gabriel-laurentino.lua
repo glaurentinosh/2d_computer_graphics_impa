@@ -141,7 +141,7 @@ local function sample(accelerated, x, y)
     local shape_index = 1
 
     scene:get_scene_data():iterate{
-        painted_shape = function(self, winding_rule, shape, paint)
+        painted_shape = function(self, rule, shape, paint)
             local shapeAccelerated = myAccelerated[shape_index]
             local dealAs = shapeAccelerated["dealAs"]
 
@@ -149,7 +149,15 @@ local function sample(accelerated, x, y)
             if dealAs == "countIntersections" then
                 local edges = shapeAccelerated["edges"]
                 intersections = countIntersections(edges, x, y)
-                if (intersections %2 ==1) then -- non-zero
+
+                --local windingRule = tostring(winding_rule)
+
+                local intersectionsBool = (intersections ~= 0)
+                if rule == winding_rule.odd then
+                    intersectionsBool = (intersections % 2 == 1)
+                end
+
+                if (intersectionsBool) then -- non-zero
                     color = paint:get_solid_color()
                 end
 
