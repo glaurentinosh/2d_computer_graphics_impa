@@ -42,21 +42,18 @@ function bezier(t, points) -- De Casteljou
 	return bezier_list[m+1][1]
 end
 
-function bezierNumeric(t, coords)
-	local bezier_list = {}
-	local m = #coords - 1
-	for j = 0,m do
-		bezier_list[j+1] = {}
-		for k = 0,m-j do
-			if j == 0 then
-				bezier_list[j+1][k+1] = coords[k+1]
-			else
-				local coord = (1-t)*bezier_list[j][k+1] + t*bezier_list[j][k+2]
-				bezier_list[j+1][k+1] = coord
-			end
-		end
+function bezierMatrix(points)
+	if #points == 2 then
+		local controlPointsBernsteinBasis = projectivity(points[1][1], points[2][1], points[3][1], 
+											points[1][2], points[2][2], points[3][2],
+											points[1][3], points[2][3], points[3][3])
+
+		local powerBasisToBernsteinBasis = projectivity(1, -2, 1,
+														0, 2, -2,
+														0, 0, 1)
+
+		local matrix = controlPointsBernsteinBasis * powerBasisToBernsteinBasis
 	end
-	return bezier_list[m+1][1]
 end
 
 function bezierDerivative(t, points)
@@ -72,16 +69,6 @@ function bezierDerivative(t, points)
 	end
 
 	return bezier(t, newPoints)
-end
-
-function bezierDerivativeNumeric(t, coords)
-	local newCoords = {}
-	local N = #coords - 1
-	for i = 1,N do
-		newCoords[i] = N*(coords[i+1] - coords[i])
-	end
-
-	return bezierNumeric(t, newCoords)
 end
 
 function bezierSecondDerivative(t, points)
@@ -175,122 +162,69 @@ function bissection(low, high, y, func)
 	return mid
 end
 
-function createEdge(initialPoint, endPoint) 
-    local edge = {}
+function createLinearSegment(initialPoint, endPoint)
+	local linearSegment = {}
 
-    -- Set minimum and maximum Y coordinates for the edge
+    local boundingBox = createBoundingBox(initialPoint,endPoint)
 
-    if (initialPoint[2] < endPoint[2]) then
-        edge["Ymin"] = initialPoint[2]
-        edge["Ymax"] = endPoint[2]
-    else
-        edge["Ymax"] = initialPoint[2]
-        edge["Ymin"] = endPoint[2]
-    end
-
-    -- Implicit line
-    -- ax1 + by1 + c = 0, ax2 + by2 + c = 0
-    -- a = y2 - y1, b = -(x2 - x1), c = - ax1 - by1
-
+    -- create implicit line ax + by + c = 0
     local line = {}
+
     line[1] = endPoint[2] - initialPoint[2]
     line[2] = initialPoint[1] - endPoint[1]
     line[3] = -line[1]*initialPoint[1] -line[2]*initialPoint[2]
-    edge["line"]= line
 
-    return edge
-end
+    local delta = 1
 
-function createPolygon(coords, shape_xf)
-    local edges = {}
-    local vertices = {}
-
-    vertices[1] = {coords[1], coords[2], 1} -- find the first vertex
-    print("coords", coords[1], coords[2])
-
-    -- transforming ...
-    vertices[1] = matrixVectorProduct(shape_xf, vertices[1])
-
-    local numVtx = 1  -- number of vertices, using as an index
-
-    for i = 4, #coords, 2 do -- starting with i = 4
-        numVtx = numVtx + 1
-
-        -- appending new vertex
-        vertices[numVtx] = {coords[i-1], coords[i], 1}
-        print(coords[i-1], coords[i])
-
-        -- transforming vertex
-        vertices[numVtx] = matrixVectorProduct(shape_xf, vertices[numVtx])
-
-        -- forming edge with previous vertex
-        edges[numVtx - 1] = createEdge(vertices[numVtx - 1], vertices[numVtx])
+    if initialPoint[2] > endPoint[2] then
+    	delta = -1
     end
 
-    -- forming edge with the first vertex
-    edges[numVtx] = createEdge(vertices[numVtx], vertices[1])
+    linearSegment["delta"] = delta
+    linearSegment["boundingBox"] = boundingBox
+    linearSegment["implicit"] = line
 
-    return edges
-end	
+    return linearSegment
+end
 
 function createBoundingBox(initialPoint, endPoint)
 	local boundingBox = {}
 
-    if (initialPoint[2] < endPoint[2]) then
-        boundingBox["Ymin"] = initialPoint[2]
-        boundingBox["Ymax"] = endPoint[2]
-    else
-        boundingBox["Ymax"] = initialPoint[2]
-        boundingBox["Ymin"] = endPoint[2]
-    end
-
-    if (initialPoint[1] < endPoint[1]) then
-        boundingBox["Xmin"] = initialPoint[1]
-        boundingBox["Xmax"] = endPoint[1]
-    else
-        boundingBox["Xmax"] = initialPoint[1]
-        boundingBox["Xmin"] = endPoint[1]
-    end
-
+	boundingBox["Xmin"] = math.min(initialPoint[1], endPoint[1])
+	boundingBox["Xmax"] = math.max(initialPoint[1], endPoint[1])
+	boundingBox["Ymin"] = math.min(initialPoint[2], endPoint[2])
+	boundingBox["Ymax"] = math.max(initialPoint[2], endPoint[2])
+	
     return boundingBox
 end
 
-function createMatrixByTransformation(xf)
-    matrix = {}     -- matrix to be returned
-    index = 1       -- index of input xf          
-    for i=1,3 do
-      matrix[i] = {}     
-      for j=1,3 do
-        matrix[i][j] = xf[index]
-        index = index + 1
-      end
-    end
-    return matrix
+function updateBoundingBox(boundingBox, shapeBoundingBox)
+	local newBoundingBox = {}
+
+	if shapeBoundingBox["Xmax"] == nil then
+		newBoundingBox["Xmin"] = boundingBox["Xmin"]
+		newBoundingBox["Xmax"] = boundingBox["Xmax"]
+		newBoundingBox["Ymin"] = boundingBox["Ymin"]
+		newBoundingBox["Ymax"] = boundingBox["Ymax"]
+	else
+		newBoundingBox["Xmin"] = math.min(shapeBoundingBox["Xmin"], boundingBox["Xmin"])
+		newBoundingBox["Xmax"] = math.max(shapeBoundingBox["Xmax"], boundingBox["Xmax"])
+		newBoundingBox["Ymin"] = math.min(shapeBoundingBox["Ymin"], boundingBox["Ymin"])
+		newBoundingBox["Ymax"] = math.max(shapeBoundingBox["Ymax"], boundingBox["Ymax"])
+	end
+
+	return newBoundingBox
 end
 
-function matrixProduct(m1, m2)
-    matrix = {}     -- matrix to be returned          
-    for i=1,3 do
-      matrix[i] = {}     
-      for j=1,3 do
-        matrix[i][j] = 0
-        for k=1,3 do
-            matrix[i][j] = matrix[i][j] + m1[i][k]*m2[k][j]
-        end
-      end
-    end
-    return matrix
+function testInsideShapeBoundingBox(shapeBoundingBox, x, y)
+	return (x < shapeBoundingBox["Xmax"]
+		and x > shapeBoundingBox["Xmin"]
+		and y < shapeBoundingBox["Ymax"]
+		and y > shapeBoundingBox["Ymin"])
 end
 
-function matrixVectorProduct(m1,v1)
-    vector = {}     -- matrix to be returned          
-    for i=1,3 do
-      vector[i] = 0     
-      for j=1,3 do
-        vector[i] = vector[i] + m1[i][j]*v1[j]
-      end
-    end
-    return vector
+function printBoundingBox(boundingBox)
+	print(boundingBox["Xmin"], boundingBox["Xmax"],boundingBox["Ymin"], boundingBox["Ymax"])
 end
 
 function innerProduct(v1, v2)
@@ -301,31 +235,27 @@ function innerProduct(v1, v2)
     return result
 end
 
-function quadraticForm(matrix, vector) -- x^T A x, for quadrics
-    local matrix_vector = matrixVectorProduct(matrix, vector) -- Ax = y
-    return innerProduct(vector, matrix_vector) -- x^T A x = x^T y = <x, y>
-end
+function countIntersections(segments, x, y)
+	local intersections = 0
+	for key, segment in pairs(segments) do
+		local boundingBox = segment["boundingBox"]
+		local implicit = segment["implicit"]
+		local delta = segment["delta"] -- tells me if I have to sum or subtract 1 from intersections
 
-function countIntersections(edges, x, y)
-    local intersections = 0
-
-    for index, edge in pairs(edges) do
-        if ( (y < edge["Ymax"]) and (y >= edge["Ymin"]) ) then
-            local line = edge["line"]
-            if (line[1] == 0) then
-                intersections = intersections -- horizontal line, no intersections
-            else 
-                local lineValue = line[1]*x + line[2]*y + line[3]
-                if (edge["line"][1] > 0 and lineValue > 0) then
+	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+	    	if (x < boundingBox["Xmin"]) then
+	    		intersections = intersections + delta
+	    	else
+	    		local value = implicit[1]*x + implicit[2]*y + implicit[3]
+                if (implicit[1] > 0 and value < 0) then
                     intersections = intersections + 1
-                elseif (edge["line"][1] < 0 and lineValue < 0) then
+                elseif (implicit[1] < 0 and value > 0) then
                     intersections = intersections - 1
-                end
-            end
-        end
-    end
-
-    return intersections
+	    		end
+	    	end
+	    end
+	end
+	return intersections
 end
 
 function countIntersectionsPath(segments, x, y)
@@ -427,6 +357,20 @@ function calculateColor(colors)
 	return newColor
 end
 
+function getLinearGradientInfo(paint)
+	local lg = paint:get_linear_gradient_data()
+	local ramp = lg:get_color_ramp()
+	local opacity = paint:get_opacity()
+    print("", "p1", lg:get_x1(), lg:get_y1())
+    print("", "p2", lg:get_x2(), lg:get_y2())
+    print("", ramp:get_spread())
+    for i, stop in ipairs(ramp:get_color_stops()) do
+        print("", stop:get_offset(), "->", table.unpack(stop:get_color()))
+    end
+	local sampledColors = uniformSampling(ramp, opacity)
+	return sampledColors
+end
+
 function getLinearGradient(paint, x, y)
     local lg = paint:get_linear_gradient_data()
     --local p1 = {lg:get_x1(), lg:get_y1()}
@@ -446,6 +390,53 @@ function getLinearGradient(paint, x, y)
 
     --local color = getRamp(ramp, gradientValueNormalized)
     return gradientValueNormalized
+end
+
+function getRadialGradientInfo(paint)
+	local info = {}
+
+	local lg = paint:get_radial_gradient_data()
+	local ramp = lg:get_color_ramp()
+	local opacity = paint:get_opacity()
+	local sampledColors = uniformSampling(ramp,opacity)
+
+	local cx = lg:get_cx()
+	local cy = lg:get_cy()
+	local fx = lg:get_fx()
+	local fy = lg:get_fy()
+	local r = lg:get_r()
+
+	-- translates focus to origin
+	local translationFocusOriginXf = projectivity(1, 0, -fx,0,1,-fy,0,0,1)
+
+	-- rotation
+	local rotationXf = projectivity(1,0,0,0,1,0,0,0,1)
+	local auxValue = (cy-fy)*(cy-fy)
+	if auxValue ~= 0 then
+	    local focusCenterDist = math.abs(cy-fy)*math.sqrt(1 + (cx-fx)*(cx-fx)/auxValue) -- distance
+		local vx = (cx - fx)/focusCenterDist -- cossine
+	    local vy = (cy - fy)/focusCenterDist -- sine
+	    rotationXf = projectivity(vx,vy,0,-vy,vx,0,0,0,1) -- it rotates clockwise
+	else
+		if fx>cx then
+			rotationXf = projectivity(-1,0,0,0,-1,0,0,0,1) -- 180 degrees
+		end
+	end
+
+	-- scaling based on radius
+	local scalingFactor = 1/r
+	local scalingXf = projectivity(scalingFactor,0,0,0,scalingFactor,0,0,0,1)
+
+	-- our simpler transformation
+	local simplerXf = scalingXf*rotationXf*translationFocusOriginXf
+
+	local newCx = simplerXf:apply(cx, cy, 1)
+
+	info["sampledColors"] = sampledColors
+	info["simplerXf"] = simplerXf
+	info["newCx"] = newCx
+
+	return info
 end
 
 function getRadialGradient(paint, px, py, cx)
@@ -492,42 +483,6 @@ function getSpread(spreadType, value)
 	else
 		print("Couldnt find spread method")
 	end
-end
-
-function binarySearch(arr, num)--LEGACY
-	local low = 1
-	local high = #arr
-
-	if num == arr[low] then return low end
-	if num == arr[high] then return high-1 end
-
-	while high - low > 1 do
-		local mid = (low + high)//2
-		if num == arr[mid] then return mid
-		elseif num < arr[mid] then high = mid
-		elseif num > arr[mid] then low = mid end
-	end
-
-	return low
-end
-
-function getRamp(ramp, value)--LEGACY
-    local t = {} -- offset
-    local c = {} -- color of stop
-
-    for i, stop in ipairs(ramp:get_color_stops()) do
-    	t[i] = stop:get_offset()
-    	c[i] = stop:get_color()
-        --print("", stop:get_offset(), "->", table.unpack(stop:get_color()))
-    end
-
-    local stopIndex = binarySearch(t,value)
-    local low = t[stopIndex]
-	local high = t[stopIndex+1]
-
-	--local colorFound = ((low - value)*c[stopIndex]+(low) 
-
-    return c[stopIndex]
 end
 
 function uniformSampling(ramp,opacity)
@@ -599,82 +554,59 @@ local function sample(accelerated, x, y)
             local dealAs = shapeAccelerated["dealAs"]
             local intersections = 0
 
-            -- Case POLYGON (including TRIANGLE)
-            if dealAs == "countIntersections" then
-                local edges = shapeAccelerated["edges"]
-                intersections = countIntersections(edges, x, y)
+        	local linearSegments = shapeAccelerated["linearSegments"]
+        	local quadraticSegments = shapeAccelerated["quadraticSegments"]
+        	local cubicSegments = shapeAccelerated["cubicSegments"]
+        	local rationalSegments = shapeAccelerated["rationalSegments"]
 
-            -- Case ELLIPSE (including CIRCLE)
-            elseif dealAs == "testInsideEllipse" then
-                local ellipse = shapeAccelerated["ellipse"]
-                --local squaredRadius = circle["squaredRadius"]
-                --local center = circle["center"]
+         	local shapeBoundingBox = shapeAccelerated["shapeBoundingBox"]
 
-                local ellipseMatrix = createMatrixByTransformation(ellipse)
+         	if testInsideShapeBoundingBox(shapeBoundingBox, x, y) then
+	        	local linearSegmentsIntersections = countIntersections(linearSegments, x, y)
 
-                local ellipseValue = quadraticForm(ellipseMatrix, {x, y, 1})
-                
-                if ellipseValue < 0 then
-                    --table.insert(colors,paint:get_solid_color())
-                    intersections = 1
-                end
+	        	intersections = linearSegmentsIntersections
+	        					+ countIntersectionsPath(quadraticSegments, x, y)
+	        					+ countIntersectionsPath(cubicSegments, x, y)
+	        					+ countIntersectionsPath(rationalSegments, x, y)
 
-            -- Case PATH    
-            elseif dealAs == "boundingBox" then
-            	
-            	local linearSegments = shapeAccelerated["linearSegments"]
-            	local quadraticSegments = shapeAccelerated["quadraticSegments"]
-            	local cubicSegments = shapeAccelerated["cubicSegments"]
-            	local rationalSegments = shapeAccelerated["rationalSegments"]
 
-            	intersections = countIntersectionsPath(linearSegments, x, y)
-            					+ countIntersectionsPath(quadraticSegments, x, y)
-            					+ countIntersectionsPath(cubicSegments, x, y)
-            					+ countIntersectionsPath(rationalSegments, x, y)
+	            local intersectionsBool = (intersections ~= 0)
+	            if rule == winding_rule.odd then
+	                intersectionsBool = (intersections % 2 == 1)
+	            end
 
-            	--if intersections ~=0 then print(intersections, table.unpack(paint:get_solid_color())) end
+	            if (intersectionsBool) then -- non-zero
+	            	local opacity = paint:get_opacity()
+	            	local paint_xf = paint:get_xf():inverse() --shapeAccelerated["xf"]
+	            	if paint:get_type() == paint_type.solid_color then
+		            	local blendColor = opacityAlphaBlending(paint:get_solid_color(),opacity)
+	                	table.insert(colors, blendColor)
 
-            else
-            	print("weird dealAs value : ", dealAs)
-            	table.insert(colors,paint:get_solid_color())
-            end
+	                elseif paint:get_type() == paint_type.linear_gradient then
+	                	--print("paint transformation", paint:get_xf())
+	                	local px, py = paint_xf:transformed(scene:get_xf():inverse()):apply(x, y, 1)
+						local t_ramp = getLinearGradient(paint, px, py)
+						local sampledColors = shapeAccelerated["sampledColors"]
+						local sampleIndex = math.max(math.floor(#sampledColors*t_ramp),1)
+						local colorFound = sampledColors[sampleIndex]
+						--if t_ramp == 0 then print("cor encontrada", colorFound, "", sampleIndex) end
+						table.insert(colors, colorFound)
 
-            local intersectionsBool = (intersections ~= 0)
-            if rule == winding_rule.odd then
-                intersectionsBool = (intersections % 2 == 1)
-            end
-
-            if (intersectionsBool) then -- non-zero
-            	local opacity = paint:get_opacity()
-            	local paint_xf = paint:get_xf():inverse() --shapeAccelerated["xf"]
-            	if paint:get_type() == paint_type.solid_color then
-	            	local blendColor = opacityAlphaBlending(paint:get_solid_color(),opacity)
-                	table.insert(colors, blendColor)
-
-                elseif paint:get_type() == paint_type.linear_gradient then
-                	--print("paint transformation", paint:get_xf())
-                	local px, py = paint_xf:transformed(scene:get_xf():inverse()):apply(x, y, 1)
-					local t_ramp = getLinearGradient(paint, px, py)
-					local sampledColors = shapeAccelerated["sampledColors"]
-					local sampleIndex = math.max(math.floor(#sampledColors*t_ramp),1)
-					local colorFound = sampledColors[sampleIndex]
-					--if t_ramp == 0 then print("cor encontrada", colorFound, "", sampleIndex) end
-					table.insert(colors, colorFound)
-
-                elseif paint:get_type() == paint_type.radial_gradient then
-			        local simplerXf = shapeAccelerated["simplerXf"]
-			        local px, py = simplerXf:apply(x,y,1) -- transformed pixel coordinates
-			        local cx = shapeAccelerated["newCx"]
-			        local t_ramp = getRadialGradient(paint,px,py,cx)
-			        local sampledColors = shapeAccelerated["sampledColors"]
-					local sampleIndex = math.max(math.floor(#sampledColors*t_ramp),1)
-					local colorFound = sampledColors[sampleIndex]
-					--if t_ramp == 0 then print("cor encontrada", colorFound, "", sampleIndex) end
-					table.insert(colors, colorFound)
-                else
-                	print("unknown paint")
-                end
-            end
+	                elseif paint:get_type() == paint_type.radial_gradient then
+				        local simplerXf = shapeAccelerated["simplerXf"]
+				        local px, py = simplerXf:apply(x,y,1) -- transformed pixel coordinates
+				        local cx = shapeAccelerated["newCx"]
+				        local t_ramp = getRadialGradient(paint,px,py,cx)
+				        local sampledColors = shapeAccelerated["sampledColors"]
+						local sampleIndex = math.max(math.floor(#sampledColors*t_ramp),1)
+						local colorFound = sampledColors[sampleIndex]
+						--if t_ramp == 0 then print("cor encontrada", colorFound, "", sampleIndex) end
+						table.insert(colors, colorFound)
+	                else
+	                	print("unknown paint")
+	                end
+	            end
+         	end
 
             shape_index = shape_index + 1
         end
@@ -751,16 +683,9 @@ function _M.accelerate(scene, window, viewport, args)
     for i,v in pairs(parsed) do
         stderr("  -%s:%s\n", tostring(i), tostring(v))
     end
-    -- This function should inspect the scene and pre-process it into a better
-    -- representation, an accelerated representation, to simplify the job of
-    -- sample(accelerated, x, y).
-    -- Here, we simply print some info about the scene_data and return the
-    -- unmodified scene.
+
     scene = scene:windowviewport(window, viewport)
     stderr("scene xf %s\n", scene:get_xf())
-
-    -- scene transformation matrix
-    local scene_xf = createMatrixByTransformation(scene:get_xf())
 
     -- stack of transformations
     local transformationStack = {}
@@ -782,514 +707,341 @@ function _M.accelerate(scene, window, viewport, args)
             xf = xf:transformed(transformationStack[#transformationStack])
 
             print("transformation depth", #transformationStack)
+        	
 
-            local shape_xf = createMatrixByTransformation(xf)
-
-            -- Transformation scene+shape
-            --shape_xf = matrixProduct(scene_xf, shape_xf)
-
-            --
-            --
-            --
-            -- Deal with COLORS
-            --
-            --
-            --
-        	local opacity = paint:get_opacity()
-        	print("Opa", opacity)
             if paint:get_type() == paint_type.linear_gradient then
-            	local lg = paint:get_linear_gradient_data()
-            	local ramp = lg:get_color_ramp()
-		        print("", "p1", lg:get_x1(), lg:get_y1())
-		        print("", "p2", lg:get_x2(), lg:get_y2())
-        	    print("", ramp:get_spread())
-			    for i, stop in ipairs(ramp:get_color_stops()) do
-			        print("", stop:get_offset(), "->", table.unpack(stop:get_color()))
-			    end
-            	local sampledColors = uniformSampling(ramp,opacity)
+            	local sampledColors = getLinearGradientInfo(paint)
             	myAccelerated[shape_index]["sampledColors"] = sampledColors
-            	--myAccelerated[shape_index]["xf"] = xf
             end
 
             if paint:get_type() == paint_type.radial_gradient then
-		        local lg = paint:get_radial_gradient_data()
-		        local ramp = lg:get_color_ramp()
-            	local sampledColors = uniformSampling(ramp,opacity)
-            	myAccelerated[shape_index]["sampledColors"] = sampledColors
-
-		        local cx = lg:get_cx()
-		        local cy = lg:get_cy()
-		        local fx = lg:get_fx()
-		        local fy = lg:get_fy()
-		        local r = lg:get_r()
-
-		        -- translates focus to origin
-		        local translationFocusOriginXf = projectivity(1, 0, -fx,0,1,-fy,0,0,1)
-
-		        -- rotation
-		        local rotationXf = projectivity(1,0,0,0,1,0,0,0,1)
-		        local auxValue = (cy-fy)*(cy-fy)
-		        if auxValue ~= 0 then
-			        local focusCenterDist = math.abs(cy-fy)*math.sqrt(1 + (cx-fx)*(cx-fx)/auxValue) -- distance
-					local vx = (cx - fx)/focusCenterDist -- cossine
-			        local vy = (cy - fy)/focusCenterDist -- sine
-			        rotationXf = projectivity(vx,vy,0,-vy,vx,0,0,0,1) -- it rotates clockwise
-			    else
-			    	if fx>cx then
-			    		rotationXf = projectivity(-1,0,0,0,-1,0,0,0,1) -- 180 degrees
-			    	end
-		        end
-
-		        -- scaling based on radius
-		        local scalingFactor = 1/r
-		        local scalingXf = projectivity(scalingFactor,0,0,0,scalingFactor,0,0,0,1)
-		        
-		        -- our simpler transformation
-		        local simplerXf = scalingXf*rotationXf*translationFocusOriginXf
-
-		        local newCx = simplerXf:apply(cx, cy, 1)
-
-            	myAccelerated[shape_index]["simplerXf"] = simplerXf*paint:get_xf():inverse()*scene:get_xf():inverse()--*xf:inverse()
-            	myAccelerated[shape_index]["newCx"] = newCx
+            	local radialGradient = getRadialGradientInfo(paint)
+            	myAccelerated[shape_index]["sampledColors"] = radialGradient["sampledColors"]
+            	myAccelerated[shape_index]["simplerXf"] = radialGradient["simplerXf"]*paint:get_xf():inverse()*scene:get_xf():inverse()--*xf:inverse()
+            	myAccelerated[shape_index]["newCx"] = radialGradient["newCx"]
             end
 
             myAccelerated[shape_index]["shapeType"] = shapeType
+        	local pdata = shape:as_path_data()
+        	--local xf = shape:get_xf():transformed(scene:get_xf())
+
+        	--myAccelerated[shape_index]["dealAs"] = "boundingBox"
+
+        	local beginContour = {}
+        	local endOpenContour = {}
+        	local linearSegments = {}
+        	local quadraticSegments = {}
+        	local cubicSegments = {}
+        	local rationalSegments = {}
+
+        	local shapeBoundingBox = {}
+
+	        pdata:iterate(filter.make_input_path_f_xform(xf, {
+	            begin_contour = function(self, x0, y0)
+	                print("", "begin_contour", x0, y0)
+	                beginContour = {x0,y0}
+	            end,
+	            end_open_contour = function(self, x0, y0)
+	                print("", "end_open_contour", x0, y0)
+	                endOpenContour = {x0,y0}
+
+	                if beginContour ~= endOpenContour then
+	                	local linearSegment = createLinearSegment(endOpenContour, beginContour)
+		                linearSegments[#linearSegments + 1] = linearSegment
+	                end
+	            end,
+	            end_closed_contour = function(self, x0, y0)
+	                print("", "end_closed_contour", x0, y0)
+	            end,
+	            linear_segment = function(self, x0, y0, x1, y1)
+	                print("", "linear_segment", x0, y0, x1, y1)
+
+	                local initialPoint = {x0,y0}
+	                local endPoint = {x1,y1}
+
+	                local linearSegment = createLinearSegment(initialPoint, endPoint)
+
+	                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
+
+	                linearSegments[#linearSegments + 1] = linearSegment
+	            end,
+	            quadratic_segment = function(self, x0, y0, x1, y1, x2, y2)
+	                print("", "quadratic_segment", x0, y0, x1, y1, x2, y2)
+
+	                local points = {{x0,y0}, {x1,y1}, {x2,y2}}
+
+	                local d_func_x = function(t)
+	                	return bezierDerivative(t, points)[1]
+	                end
+
+	                local d_func_y = function(t)
+	                	return bezierDerivative(t, points)[2]
+	                end
 
 
-            -- Case TRIANGLE
-            if shapeType == shape_type.triangle then
-                local tdata = shape:get_triangle_data()
-                --local vertices = {}
-                --local edges = {}
-                print("asPathdata", shape:as_path_data())
-                
+	                local boundingBox_t = {0, 1}
+	                -- check critical points in x
+	                local crit_x = -1
+	                if (d_func_x(0) < 0 and d_func_x(1) > 0) or (d_func_x(0) > 0 and d_func_x(1) < 0) then
+	                	crit_x = bissection(0, 1, 0, d_func_x)
+	                	table.insert(boundingBox_t, crit_x)
+	                end
 
-                print("\tp1", tdata:get_x1(), tdata:get_y1())
-                print("\tp2", tdata:get_x2(), tdata:get_y2())
-                print("\tp3", tdata:get_x3(), tdata:get_y3())
+	                -- check critical points in y
+	                local crit_y = -1
+	                if (d_func_y(0) < 0 and d_func_y(1) > 0) or (d_func_y(0) > 0 and d_func_y(1) < 0) then
+	                	crit_y = bissection(0, 1, 0, d_func_y)
+	                	table.insert(boundingBox_t, crit_y)
+	                end
 
-                local coords = {tdata:get_x1(), tdata:get_y1(),tdata:get_x2(), tdata:get_y2(),tdata:get_x3(), tdata:get_y3()}
-                local edges = createPolygon(coords, shape_xf)
+	                -- sort critival points 
+	                table.sort(boundingBox_t)
 
-                myAccelerated[shape_index]["edges"] = edges
-                myAccelerated[shape_index]["dealAs"] = "countIntersections"
+	                for i=2,#boundingBox_t do -- create quadratic segments
+	                	local newPoints = reparametrization(boundingBox_t[i-1], boundingBox_t[i], points)
 
+	                	local initialPoint = newPoints[1]
+	                	local endPoint = newPoints[#newPoints]
 
-            -- Case POLYGON
-            elseif shapeType == shape_type.polygon then
-                local pdata = shape:get_polygon_data()
-                local coords = pdata:get_coordinates()
-                
-                local edges = createPolygon(coords, shape_xf)
-
-                myAccelerated[shape_index]["edges"] = edges
-                myAccelerated[shape_index]["dealAs"] = "countIntersections"
-
-
-            -- Case RECT
-        	elseif shapeType == shape_type.rect then
-        		local rdata = shape:get_rect_data()
-        		
-        		local x0 = rdata:get_x()
-        		local y0 = rdata:get_y()
-        		local dx = rdata:get_width()
-        		local dy = rdata:get_height()
-
-				print("", rdata:get_x(), rdata:get_y())
-        		print("", rdata:get_width(), rdata:get_height())
-
-        		local coords = {x0,y0,x0+dx,y0,x0+dx,y0+dy,x0,y0+dy}
-        		local edges = createPolygon(coords, shape_xf)
-
-				myAccelerated[shape_index]["edges"] = edges
-                myAccelerated[shape_index]["dealAs"] = "countIntersections"
-
-
-            -- Case CIRCLE
-            elseif shapeType == shape_type.circle then
-                local cdata = shape:get_circle_data()
-                
-                local center = {cdata:get_cx(), cdata:get_cy(), 1}
-                local radius = cdata:get_r()
-
-                print("\tc", center[1], center[2])
-                print("\tr", radius)
-
-
-                local unitCircle = projectivity(1,0,0,0,1,0,0,0,-1)
-
-                local translationMatrix = projectivity(radius,0,center[1],0,radius,center[2],0,0,1):inverse()
-
-                local circle = translationMatrix:transpose()*unitCircle*translationMatrix
-
-                local shapeScene_xf = xf:inverse() -- scene*shape
-
-                local ellipse = shapeScene_xf:transpose()*circle*shapeScene_xf
-
-                myAccelerated[shape_index]["ellipse"] = ellipse
-                myAccelerated[shape_index]["dealAs"] = "testInsideEllipse"
-
-
-            -- Case PATH
-            elseif shapeType == shape_type.path then
-            	local pdata = shape:get_path_data()
-            	--local xf = shape:get_xf():transformed(scene:get_xf())
-
-            	myAccelerated[shape_index]["dealAs"] = "boundingBox"
-            	local beginContour = {}
-            	local endOpenContour = {}
-            	local linearSegments = {}
-            	local quadraticSegments = {}
-            	local cubicSegments = {}
-            	local rationalSegments = {}
-            	local shapeBoundingBox = {}
-
-		        pdata:iterate(filter.make_input_path_f_xform(xf,{
-		            begin_contour = function(self, x0, y0)
-		                print("", "begin_contour", x0, y0)
-		                beginContour = {x0,y0}
-		            end,
-		            end_open_contour = function(self, x0, y0)
-		                print("", "end_open_contour", x0, y0)
-		                endOpenContour = {x0,y0}
-		                if beginContour ~= endOpenContour then
-		                	local linearSegment = {}
-		                	local boundingBox = createBoundingBox(endOpenContour, beginContour)
-		                	local func_x = function(t)
-		                		return (1-t)*endOpenContour[1] + t*beginContour[1]
-		                	end
-			                local func_y = function(t)
-			                	return (1-t)*endOpenContour[2] + t*beginContour[2]
-			                end
-    		                local delta = 1
-
-			                if y0 > beginContour[2] then
-			                	delta = -1
-			                end
-			                linearSegment["boundingBox"] = boundingBox
-			               	linearSegment["delta"] = delta
-		                	linearSegment["func_x"] = func_x
-		                	linearSegment["func_y"] = func_y
-			                linearSegments[#linearSegments + 1] = linearSegment
-		                end
-		            end,
-		            end_closed_contour = function(self, x0, y0)
-		                print("", "end_closed_contour", x0, y0)
-		                --myAccelerated[shape_index]["end_closed_contour"] = {x0,y0}
-		            end,
-		            linear_segment = function(self, x0, y0, x1, y1)
-		                print("", "linear_segment", x0, y0, x1, y1)
-
-		                local boundingBox = createBoundingBox({x0,y0},{x1,y1})
-		                local points = {{x0,y0}, {x1,y1}}
-
-		                local func_x = function(t)
-		                	--return (1-t)*x0 + t*x1
-		                	return bezier(t, points)[1]
-		                end
-
-		                local func_y = function(t)
-		                	--return (1-t)*y0 + t*y1
-		                	return bezier(t, points)[2]
-		                end
-
+						local boundingBox = createBoundingBox(initialPoint,endPoint)
+		                
 		                local delta = 1
-
-		                if y0 > y1 then
+		                if initialPoint[2] > endPoint[2] then
 		                	delta = -1
 		                end
 
-		                local linearSegment = {}
-
-		                linearSegment["boundingBox"] = boundingBox
-		                linearSegment["delta"] = delta
-		                --linearSegment["points"] = points
-		                linearSegment["func_x"] = func_x
-		                linearSegment["func_y"] = func_y
-		                linearSegments[#linearSegments + 1] = linearSegment
-		                --linearSegmentsIndex = linearSegmentsIndex + 1
-		            end,
-		            quadratic_segment = function(self, x0, y0, x1, y1, x2, y2)
-		                print("", "quadratic_segment", x0, y0, x1, y1, x2, y2)
-
-		                local points = {{x0,y0}, {x1,y1}, {x2,y2}}
-
-		                local d_func_x = function(t)
-		                	return bezierDerivative(t, points)[1]
+		                local func_x = function(t)
+		                	return bezier(t, newPoints)[1]
 		                end
 
-		                local d_func_y = function(t)
-		                	return bezierDerivative(t, points)[2]
+		                local func_y = function(t)
+		                	return bezier(t, newPoints)[2]
 		                end
+		                
+		                local quadraticSegment = {}
+
+		                quadraticSegment["boundingBox"] = boundingBox
+		                quadraticSegment["func_x"] = func_x
+		                quadraticSegment["func_y"] = func_y
+		                quadraticSegment["delta"] = delta
+		                quadraticSegments[#quadraticSegments + 1] = quadraticSegment		                	
+	                end
+
+	            end,
+	            cubic_segment = function(self, x0, y0, x1, y1, x2, y2, x3, y3)
+	                print("", "cubic_segment", x0, y0, x1, y1, x2, y2, x3, y3)
 
 
-		                local boundingBox_t = {0, 1}
+	                local points = {{x0,y0}, {x1,y1}, {x2,y2}, {x3,y3}}
+
+	                -- find second derivatives
+	                local d2_func_x = function(t)
+	                	return bezierSecondDerivative(t, points)[1]
+	                end
+
+	                local d2_func_y = function(t)
+	                	return bezierSecondDerivative(t, points)[2]
+	                end
+
+	                -- find if second derivates have a root (it's a line)
+	                local bissection_extreme_t = {0, 1}
+	                -- check critical points in x
+	                if (d2_func_x(0) < 0 and d2_func_x(1) > 0) or (d2_func_x(0) > 0 and d2_func_x(1) < 0) then
+	                	local crit_x = bissection(0, 1, 0, d2_func_x)
+	                	table.insert(bissection_extreme_t, crit_x)
+	                end
+
+	                -- check critical points in y
+	                if (d2_func_y(0) < 0 and d2_func_y(1) > 0) or (d2_func_y(0) > 0 and d2_func_y(1) < 0) then
+	                	local crit_y = bissection(0, 1, 0, d2_func_y)
+	                	table.insert(bissection_extreme_t, crit_y)
+	                end
+
+	                -- sort bissection extreme points 
+	                table.sort(bissection_extreme_t)
+
+	                -- bissect intervals
+	                local d_func_x = function(t)
+	                	return bezierDerivative(t, points)[1]
+	                end
+
+	                local d_func_y = function(t)
+	                	return bezierDerivative(t, points)[2]
+	                end
+
+	                local boundingBox_t = {0, 1} -- critical points in t for bounding boxes
+
+	                for i=2,#bissection_extreme_t do
+		                local low = bissection_extreme_t[i-1]
+		                local high = bissection_extreme_t[i]
 		                -- check critical points in x
-		                local crit_x = -1
-		                if (d_func_x(0) < 0 and d_func_x(1) > 0) or (d_func_x(0) > 0 and d_func_x(1) < 0) then
-		                	crit_x = bissection(0, 1, 0, d_func_x)
+		                if (d_func_x(low) < 0 and d_func_x(high) > 0) or (d_func_x(low) > 0 and d_func_x(high) < 0) then
+		                	local crit_x = bissection(low, high, 0, d_func_x)
 		                	table.insert(boundingBox_t, crit_x)
 		                end
 
 		                -- check critical points in y
-		                local crit_y = -1
-		                if (d_func_y(0) < 0 and d_func_y(1) > 0) or (d_func_y(0) > 0 and d_func_y(1) < 0) then
-		                	crit_y = bissection(0, 1, 0, d_func_y)
+		                if (d_func_y(low) < 0 and d_func_y(high) > 0) or (d_func_y(low) > 0 and d_func_y(high) < 0) then
+		                	local crit_y = bissection(low, high, 0, d_func_y)
 		                	table.insert(boundingBox_t, crit_y)
 		                end
+	                end
 
-		                -- sort critival points 
-		                table.sort(boundingBox_t)
+	                -- sort critival points 
+	                table.sort(boundingBox_t)
 
-		                for i=2,#boundingBox_t do -- create quadratic segments
-		                	local newPoints = reparametrization(boundingBox_t[i-1], boundingBox_t[i], points)
 
-		                	local initialPoint = newPoints[1]
-		                	local endPoint = newPoints[#newPoints]
+	                for i=2,#boundingBox_t do -- create quadratic segments
+	                	local newPoints = reparametrization(boundingBox_t[i-1], boundingBox_t[i], points)
 
-							local boundingBox = createBoundingBox(initialPoint,endPoint)
-			                
-			                local delta = 1
-			                if initialPoint[2] > endPoint[2] then
-			                	delta = -1
-			                end
+	                	local initialPoint = newPoints[1]
+	                	local endPoint = newPoints[#newPoints]
 
-    		                local func_x = function(t)
-			                	return bezier(t, newPoints)[1]
-			                end
-
-			                local func_y = function(t)
-			                	return bezier(t, newPoints)[2]
-			                end
-			                
-			                local quadraticSegment = {}
-
-			                quadraticSegment["boundingBox"] = boundingBox
-			                quadraticSegment["func_x"] = func_x
-			                quadraticSegment["func_y"] = func_y
-			                quadraticSegment["delta"] = delta
-			                quadraticSegments[#quadraticSegments + 1] = quadraticSegment		                	
+						local boundingBox = createBoundingBox(initialPoint,endPoint)
+		                
+		                local delta = 1
+		                if initialPoint[2] > endPoint[2] then
+		                	delta = -1
 		                end
 
-		            end,
-		            cubic_segment = function(self, x0, y0, x1, y1, x2, y2, x3, y3)
-		                print("", "cubic_segment", x0, y0, x1, y1, x2, y2, x3, y3)
-
-
-		                local points = {{x0,y0}, {x1,y1}, {x2,y2}, {x3,y3}}
-
-		                -- find second derivatives
-		                local d2_func_x = function(t)
-		                	return bezierSecondDerivative(t, points)[1]
+		                local func_x = function(t)
+		                	return bezier(t, newPoints)[1]
 		                end
 
-		                local d2_func_y = function(t)
-		                	return bezierSecondDerivative(t, points)[2]
+		                local func_y = function(t)
+		                	return bezier(t, newPoints)[2]
 		                end
+		                
+		                local cubicSegment = {}
 
-		                -- find if second derivates have a root (it's a line)
-		                local bissection_extreme_t = {0, 1}
-		                -- check critical points in x
-		                if (d2_func_x(0) < 0 and d2_func_x(1) > 0) or (d2_func_x(0) > 0 and d2_func_x(1) < 0) then
-		                	local crit_x = bissection(0, 1, 0, d2_func_x)
-		                	table.insert(bissection_extreme_t, crit_x)
+		                cubicSegment["boundingBox"] = boundingBox
+		                cubicSegment["func_x"] = func_x
+		                cubicSegment["func_y"] = func_y
+		                cubicSegment["delta"] = delta
+		                cubicSegments[#cubicSegments + 1] = cubicSegment		                	
+	                end
+	            end,
+	            rational_quadratic_segment = function(self, x0, y0, x1, y1, w1,
+	                x2, y2)
+	                print("", "rational_quadratic_segment", x0, y0, x1, y1, w1,
+	                    x2, y2)
+
+	                local points = {{x0,y0,1},{x1,y1,w1},{x2,y2,1}}
+
+	                --local x_coords = {x0,x1,x2}
+	                --local y_coords = {y0,y1,y2}
+	                --local w_coords = {1,w1,1}
+
+	                local func_w = function(t)
+	                	--return bezierNumeric(t, w_coords)
+	                	return bezier(t,points)[3]
+	                end
+	                local func_x = function(t)
+	                	--return bezierNumeric(t, x_coords)
+	                	return bezier(t,points)[1]
+	                end
+	                local func_y = function(t)
+	                	--return bezierNumeric(t, y_coords)
+	                	return bezier(t,points)[2]
+	                end
+
+	                local d_func_w = function(t)
+	                	--return bezierDerivativeNumeric(t, w_coords)
+	                	return bezierDerivative(t,points)[3]
+	                end
+	                local d_func_x = function(t)
+	                	--return bezierDerivativeNumeric(t, x_coords)
+	                	return bezierDerivative(t,points)[1]
+	                end
+	                local d_func_y = function(t)
+	                	--return bezierDerivativeNumeric(t, y_coords)
+	                	return bezierDerivative(t,points)[2]
+	                end
+
+	                local d_func_x_w = function(t) -- numerator of derivative of x(t)/w(t)
+	                	return d_func_x(t)*func_w(t) - func_x(t)*d_func_w(t)
+	                end
+	                local d_func_y_w = function(t) -- numerator of derivative of x(t)/w(t)
+	                	return d_func_y(t)*func_w(t) - func_y(t)*d_func_w(t)
+	                end
+
+	               
+	                local boundingBox_t = {0, 1}
+	                -- check critical points in x
+
+	                if (d_func_x_w(0) < 0 and d_func_x_w(1) > 0) or (d_func_x_w(0) > 0 and d_func_x_w(1) < 0) then
+	                	local crit_x = bissection(0, 1, 0, d_func_x_w)
+	                	table.insert(boundingBox_t, crit_x)
+	                end
+
+	                -- check critical points in y
+
+	                if (d_func_y_w(0) < 0 and d_func_y_w(1) > 0) or (d_func_y_w(0) > 0 and d_func_y_w(1) < 0) then
+	                	local crit_y = bissection(0, 1, 0, d_func_y_w)
+	                	table.insert(boundingBox_t, crit_y)
+	                end
+
+	                -- sort critival points 
+	                table.sort(boundingBox_t)
+
+
+	                for i=2,#boundingBox_t do -- create rational segments
+	                	local newPoints = reparametrization(boundingBox_t[i-1], boundingBox_t[i], points)
+	                	local w2 = newPoints[3][3]
+	                	local w0 = newPoints[1][3]
+	                	print("w0, w2", w0, w2)
+
+	                	local lambda = math.sqrt(w2/w0)
+
+	                	for i=1,#newPoints do
+	                		for j=1,#newPoints[1] do
+	                			newPoints[i][j] = newPoints[i][j] * math.pow(lambda,3-i)/w2
+	                		end
+	                	end
+
+	                	for k,v in pairs(newPoints) do
+	                		print("v", v[3])
+	                	end
+
+	                	--local wCoord = newPoints[2][3]
+	                	--print("wCoord", wCoord)
+	                	local initialPoint = newPoints[1]
+	                	local endPoint = newPoints[#newPoints]
+
+						local boundingBox = createBoundingBox(initialPoint,endPoint)
+		                
+		                local delta = 1
+		                if initialPoint[2] > endPoint[2] then
+		                	delta = -1
 		                end
-
-		                -- check critical points in y
-		                if (d2_func_y(0) < 0 and d2_func_y(1) > 0) or (d2_func_y(0) > 0 and d2_func_y(1) < 0) then
-		                	local crit_y = bissection(0, 1, 0, d2_func_y)
-		                	table.insert(bissection_extreme_t, crit_y)
-		                end
-
-		                -- sort bissection extreme points 
-		                table.sort(bissection_extreme_t)
-
-		                -- bissect intervals
-		                local d_func_x = function(t)
-		                	return bezierDerivative(t, points)[1]
-		                end
-
-		                local d_func_y = function(t)
-		                	return bezierDerivative(t, points)[2]
-		                end
-
-		                local boundingBox_t = {0, 1} -- critical points in t for bounding boxes
-
-		                for i=2,#bissection_extreme_t do
-			                local low = bissection_extreme_t[i-1]
-			                local high = bissection_extreme_t[i]
-			                -- check critical points in x
-			                if (d_func_x(low) < 0 and d_func_x(high) > 0) or (d_func_x(low) > 0 and d_func_x(high) < 0) then
-			                	local crit_x = bissection(low, high, 0, d_func_x)
-			                	table.insert(boundingBox_t, crit_x)
-			                end
-
-			                -- check critical points in y
-			                if (d_func_y(low) < 0 and d_func_y(high) > 0) or (d_func_y(low) > 0 and d_func_y(high) < 0) then
-			                	local crit_y = bissection(low, high, 0, d_func_y)
-			                	table.insert(boundingBox_t, crit_y)
-			                end
-		                end
-
-		                -- sort critival points 
-		                table.sort(boundingBox_t)
-
-
-		                for i=2,#boundingBox_t do -- create quadratic segments
-		                	local newPoints = reparametrization(boundingBox_t[i-1], boundingBox_t[i], points)
-
-		                	local initialPoint = newPoints[1]
-		                	local endPoint = newPoints[#newPoints]
-
-							local boundingBox = createBoundingBox(initialPoint,endPoint)
-			                
-			                local delta = 1
-			                if initialPoint[2] > endPoint[2] then
-			                	delta = -1
-			                end
-
-    		                local func_x = function(t)
-			                	return bezier(t, newPoints)[1]
-			                end
-
-			                local func_y = function(t)
-			                	return bezier(t, newPoints)[2]
-			                end
-			                
-			                local cubicSegment = {}
-
-			                cubicSegment["boundingBox"] = boundingBox
-			                cubicSegment["func_x"] = func_x
-			                cubicSegment["func_y"] = func_y
-			                cubicSegment["delta"] = delta
-			                cubicSegments[#cubicSegments + 1] = cubicSegment		                	
-		                end
-		            end,
-		            rational_quadratic_segment = function(self, x0, y0, x1, y1, w1,
-		                x2, y2)
-		                print("", "rational_quadratic_segment", x0, y0, x1, y1, w1,
-		                    x2, y2)
-
-		                local points = {{x0,y0,1},{x1,y1,w1},{x2,y2,1}}
-
-		                --local x_coords = {x0,x1,x2}
-		                --local y_coords = {y0,y1,y2}
-		                --local w_coords = {1,w1,1}
 
 		                local func_w = function(t)
-		                	--return bezierNumeric(t, w_coords)
-		                	return bezier(t,points)[3]
+		                	return bezier(t, newPoints)[3]
 		                end
+
 		                local func_x = function(t)
-		                	--return bezierNumeric(t, x_coords)
-		                	return bezier(t,points)[1]
+		                	return bezier(t, newPoints)[1]/func_w(t)
 		                end
+
 		                local func_y = function(t)
-		                	--return bezierNumeric(t, y_coords)
-		                	return bezier(t,points)[2]
+		                	return bezier(t, newPoints)[2]/func_w(t)
 		                end
+		                
+		                local rationalSegment = {}
 
-		                local d_func_w = function(t)
-		                	--return bezierDerivativeNumeric(t, w_coords)
-		                	return bezierDerivative(t,points)[3]
-		                end
-		                local d_func_x = function(t)
-		                	--return bezierDerivativeNumeric(t, x_coords)
-		                	return bezierDerivative(t,points)[1]
-		                end
-		                local d_func_y = function(t)
-		                	--return bezierDerivativeNumeric(t, y_coords)
-		                	return bezierDerivative(t,points)[2]
-		                end
-
-		                local d_func_x_w = function(t) -- numerator of derivative of x(t)/w(t)
-		                	return d_func_x(t)*func_w(t) - func_x(t)*d_func_w(t)
-		                end
-		                local d_func_y_w = function(t) -- numerator of derivative of x(t)/w(t)
-		                	return d_func_y(t)*func_w(t) - func_y(t)*d_func_w(t)
-		                end
-
-		               
-		                local boundingBox_t = {0, 1}
-		                -- check critical points in x
-
-		                if (d_func_x_w(0) < 0 and d_func_x_w(1) > 0) or (d_func_x_w(0) > 0 and d_func_x_w(1) < 0) then
-		                	local crit_x = bissection(0, 1, 0, d_func_x_w)
-		                	table.insert(boundingBox_t, crit_x)
-		                end
-
-		                -- check critical points in y
-
-		                if (d_func_y_w(0) < 0 and d_func_y_w(1) > 0) or (d_func_y_w(0) > 0 and d_func_y_w(1) < 0) then
-		                	local crit_y = bissection(0, 1, 0, d_func_y_w)
-		                	table.insert(boundingBox_t, crit_y)
-		                end
-
-		                -- sort critival points 
-		                table.sort(boundingBox_t)
-
-
-		                for i=2,#boundingBox_t do -- create rational segments
-		                	local newPoints = reparametrization(boundingBox_t[i-1], boundingBox_t[i], points)
-		                	local w2 = newPoints[3][3]
-		                	local w0 = newPoints[1][3]
-		                	print("w0, w2", w0, w2)
-
-		                	local lambda = math.sqrt(w2/w0)
-
-		                	for i=1,#newPoints do
-		                		for j=1,#newPoints[1] do
-		                			newPoints[i][j] = newPoints[i][j] * math.pow(lambda,3-i)/w2
-		                		end
-		                	end
-
-		                	for k,v in pairs(newPoints) do
-		                		print("v", v[3])
-		                	end
-
-		                	--local wCoord = newPoints[2][3]
-		                	--print("wCoord", wCoord)
-		                	local initialPoint = newPoints[1]
-		                	local endPoint = newPoints[#newPoints]
-
-							local boundingBox = createBoundingBox(initialPoint,endPoint)
-			                
-			                local delta = 1
-			                if initialPoint[2] > endPoint[2] then
-			                	delta = -1
-			                end
-
-			                local func_w = function(t)
-			                	return bezier(t, newPoints)[3]
-			                end
-
-    		                local func_x = function(t)
-			                	return bezier(t, newPoints)[1]/func_w(t)
-			                end
-
-			                local func_y = function(t)
-			                	return bezier(t, newPoints)[2]/func_w(t)
-			                end
-			                
-			                local rationalSegment = {}
-
-			                rationalSegment["boundingBox"] = boundingBox
-			                rationalSegment["func_x"] = func_x
-			                rationalSegment["func_y"] = func_y
-			                rationalSegment["delta"] = delta
-			                rationalSegments[#rationalSegments + 1] = rationalSegment		                	
-		                end
-		            end,
-		        }))
-		        myAccelerated[shape_index]["linearSegments"] = linearSegments
-		        myAccelerated[shape_index]["quadraticSegments"] = quadraticSegments
-		        myAccelerated[shape_index]["cubicSegments"] = cubicSegments
-		        myAccelerated[shape_index]["rationalSegments"] = rationalSegments
-		        myAccelerated[shape_index]["shapeBoundingBox"] = {}
-
-            else
-                print("not a triangle"); print("not at all")
-            end
+		                rationalSegment["boundingBox"] = boundingBox
+		                rationalSegment["func_x"] = func_x
+		                rationalSegment["func_y"] = func_y
+		                rationalSegment["delta"] = delta
+		                rationalSegments[#rationalSegments + 1] = rationalSegment		                	
+	                end
+	            end,
+	        }))
+	        myAccelerated[shape_index]["linearSegments"] = linearSegments
+	        myAccelerated[shape_index]["quadraticSegments"] = quadraticSegments
+	        myAccelerated[shape_index]["cubicSegments"] = cubicSegments
+	        myAccelerated[shape_index]["rationalSegments"] = rationalSegments
+	        myAccelerated[shape_index]["shapeBoundingBox"] = shapeBoundingBox
 
             shape_index = shape_index + 1
         end,
