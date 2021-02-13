@@ -43,7 +43,7 @@ function bezier(t, points) -- De Casteljou
 end
 
 function bezierMatrix(points)
-	if #points == 2 then
+	if #points == 3 then
 		local controlPointsBernsteinBasis = projectivity(points[1][1], points[2][1], points[3][1], 
 											points[1][2], points[2][2], points[3][2],
 											points[1][3], points[2][3], points[3][3])
@@ -52,7 +52,7 @@ function bezierMatrix(points)
 														0, 2, -2,
 														0, 0, 1)
 
-		local matrix = controlPointsBernsteinBasis * powerBasisToBernsteinBasis
+		return controlPointsBernsteinBasis * powerBasisToBernsteinBasis
 	end
 end
 
@@ -69,6 +69,42 @@ function bezierDerivative(t, points)
 	end
 
 	return bezier(t, newPoints)
+end
+
+function bezierDerivativeMatrix(points)
+	local newPoints = {}
+	local N = #points - 1
+	for i = 1,N do
+		newPoints[i] = {}
+		for l = 1,#points[1] do -- for each coordinate
+			newPoints[i][l] = N*(points[i+1][l] - points[i][l])
+		end
+	end
+	return bezierMatrix(newPoints)
+end
+
+function getResultant(points)
+    local bezMatrix = bezierMatrix(points)
+
+    local fx = {bezMatrix[1],bezMatrix[2],bezMatrix[3]}
+    local gy = {bezMatrix[4],bezMatrix[5],bezMatrix[6]}
+
+    local resultantDet = function(x, y)
+    	local firstDet = projectivity(fx[1] - x, gy[2], gy[1] - y,
+    									fx[2], gy[3], gy[2],
+    									fx[3], 0, gy[3]):det()
+
+
+    	local secondDet = projectivity(fx[2], fx[1] - x, gy[1] - y,
+    									fx[3], fx[2], gy[2],
+    									0, fx[3], gy[3]):det()
+
+    	local det = (fx[1] - x)*firstDet + (gy[1] - y)*secondDet
+
+    	return det
+    end
+
+    return resultantDet
 end
 
 function bezierSecondDerivative(t, points)
@@ -162,17 +198,33 @@ function bissection(low, high, y, func)
 	return mid
 end
 
+function evalLine(point, line)
+	return line[1]*point[1] + line[2]*point[2] + line[3]
+end
+
+function createImplicitLine(initialPoint, endPoint)
+	-- create implicit line ax + by + c = 0
+    local line = {}
+
+    line[1] = (endPoint[2] - initialPoint[2])
+    line[2] = (initialPoint[1] - endPoint[1])
+    line[3] = (-line[1]*initialPoint[1] -line[2]*initialPoint[2])
+
+    return line
+end
+
+function createImplicitPositiveLine(initialPoint, endPoint)
+	if initialPoint[2] > endPoint[2] then return createImplicitLine(endPoint, initialPoint) end
+	return createImplicitLine(initialPoint, endPoint)
+end
+
 function createLinearSegment(initialPoint, endPoint)
 	local linearSegment = {}
 
     local boundingBox = createBoundingBox(initialPoint,endPoint)
 
     -- create implicit line ax + by + c = 0
-    local line = {}
-
-    line[1] = endPoint[2] - initialPoint[2]
-    line[2] = initialPoint[1] - endPoint[1]
-    line[3] = -line[1]*initialPoint[1] -line[2]*initialPoint[2]
+    local line = createImplicitLine(initialPoint, endPoint)
 
     local delta = 1
 
@@ -237,6 +289,7 @@ end
 
 function countIntersections(segments, x, y)
 	local intersections = 0
+	local pixel = {x, y, 1}
 	for key, segment in pairs(segments) do
 		local boundingBox = segment["boundingBox"]
 		local implicit = segment["implicit"]
@@ -246,7 +299,7 @@ function countIntersections(segments, x, y)
 	    	if (x < boundingBox["Xmin"]) then
 	    		intersections = intersections + delta
 	    	else
-	    		local value = implicit[1]*x + implicit[2]*y + implicit[3]
+	    		local value = evalLine(pixel, implicit)
                 if (implicit[1] > 0 and value < 0) then
                     intersections = intersections + 1
                 elseif (implicit[1] < 0 and value > 0) then
@@ -254,6 +307,87 @@ function countIntersections(segments, x, y)
 	    		end
 	    	end
 	    end
+	end
+	return intersections
+end
+
+function quadraticImplicitForm(points, x, y)
+	-- Horner Form
+	-- Get determinant of Cayley Bezout
+	-- Translate P0 to origin
+	local intersections = 0
+
+	local x1 = points[2][1] - points[1][1]
+	local y1 = points[2][2] - points[1][2]
+	local x2 = points[3][1] - points[1][1]
+	local y2 = points[3][2] - points[1][2]
+
+	local xp = x - points[1][1]
+	local yp = y - points[1][2]
+
+	-- Cayley-Bézout entries
+	local a11 = 2*xp*y1 - 2*x1*yp
+	local a22 = 2*x2*y1 - 2*x1*y2
+	local a12 = (2*x1 - x2)*yp - (2*y1 - y2)*xp
+
+	-- Orientation given by partial derivative in x
+	local xDerivative = 2*y2*(x1*y2 - x2*y1)
+
+	-- resultant is the determinant
+	local resultant = a11*a22 - a12*a12
+
+	-- initialPoint[2] - endPoint[2]
+	local orientation = 1
+	if y2 < 0 then orientation = -1 end
+
+	if resultant > 0 then
+		if xDerivative > 0 then return orientation
+		else return 0 end
+	else
+		if xDerivative < 0 then return orientation
+		else return 0 end
+	end
+
+end
+
+function countQuadratic(segments, x, y)
+	local intersections = 0
+	local pixel = {x, y, 1}
+	
+	for key, segment in pairs(segments) do
+		local resultant = segment["resultant"]
+		local delta = segment["delta"]
+		local boundingBox = segment["boundingBox"]
+		local p0p1 = segment["p0p1"]
+		local p1p2 = segment["p1p2"]
+		local p0p2 = segment["p0p2"]
+		local positionP1 = segment["positionP1"]
+		local controlPoints = segment["controlPoints"]
+
+	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+	    	if (x < boundingBox["Xmin"]) then
+	    		intersections = intersections + delta
+	    	else
+	    		if positionP1 == -1 then
+	    			if evalLine(pixel, p0p1) < 0 or evalLine(pixel, p1p2) < 0 then
+	    				intersections = intersections + delta
+	    			elseif evalLine(pixel, p0p2) < 0 then
+	    				intersections = intersections + resultant(x,y)
+	    			end
+	    		elseif positionP1 == 1 then
+	    			if evalLine(pixel, p0p2) < 0 then
+	    				intersections = intersections + delta
+	    			elseif evalLine(pixel, p0p1) > 0 or evalLine(pixel, p1p2) > 0 then
+	    				intersections = intersections + resultant(x,y)
+	    			end
+	    		else
+	    			stderr("no positionP1 found")
+	    		end
+
+	    		--intersections = intersections + resultant(x,y)
+	    	end
+	    end
+
 	end
 	return intersections
 end
@@ -563,9 +697,11 @@ local function sample(accelerated, x, y)
 
          	if testInsideShapeBoundingBox(shapeBoundingBox, x, y) then
 	        	local linearSegmentsIntersections = countIntersections(linearSegments, x, y)
+	        	local quadraticSegmentsIntersections = countQuadratic(quadraticSegments, x, y)
 
 	        	intersections = linearSegmentsIntersections
-	        					+ countIntersectionsPath(quadraticSegments, x, y)
+	        					+ quadraticSegmentsIntersections
+	        					--+ countIntersectionsPath(quadraticSegments, x, y)
 	        					+ countIntersectionsPath(cubicSegments, x, y)
 	        					+ countIntersectionsPath(rationalSegments, x, y)
 
@@ -766,7 +902,7 @@ function _M.accelerate(scene, window, viewport, args)
 	                linearSegments[#linearSegments + 1] = linearSegment
 	            end,
 	            quadratic_segment = function(self, x0, y0, x1, y1, x2, y2)
-	                print("", "quadratic_segment", x0, y0, x1, y1, x2, y2)
+	                --print("", "quadratic_segment", x0, y0, x1, y1, x2, y2)
 
 	                local points = {{x0,y0}, {x1,y1}, {x2,y2}}
 
@@ -800,29 +936,42 @@ function _M.accelerate(scene, window, viewport, args)
 	                for i=2,#boundingBox_t do -- create quadratic segments
 	                	local newPoints = reparametrization(boundingBox_t[i-1], boundingBox_t[i], points)
 
+	                	print("", "quadratic_segment", newPoints[1][1], newPoints[1][2],
+	                		newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
+
+	                	local resultant = function(s, t)
+	                		return quadraticImplicitForm(newPoints, s, t)
+	                	end
+
 	                	local initialPoint = newPoints[1]
 	                	local endPoint = newPoints[#newPoints]
 
 						local boundingBox = createBoundingBox(initialPoint,endPoint)
+						shapeBoundingBox = updateBoundingBox(boundingBox, shapeBoundingBox)
+		                
+		                local implicitP0P1 = createImplicitPositiveLine(points[1], points[2])
+		                local implicitP1P2 = createImplicitPositiveLine(points[2], points[3])
+		                local implicitP0P2 = createImplicitPositiveLine(points[1], points[3])
+		                local positionP1 = 1
+
+		                if evalLine(points[2], implicitP0P2) < 0 then
+		                	positionP1 = -1
+		                end
 		                
 		                local delta = 1
 		                if initialPoint[2] > endPoint[2] then
 		                	delta = -1
 		                end
 
-		                local func_x = function(t)
-		                	return bezier(t, newPoints)[1]
-		                end
-
-		                local func_y = function(t)
-		                	return bezier(t, newPoints)[2]
-		                end
-		                
 		                local quadraticSegment = {}
 
 		                quadraticSegment["boundingBox"] = boundingBox
-		                quadraticSegment["func_x"] = func_x
-		                quadraticSegment["func_y"] = func_y
+		                quadraticSegment["controlPoints"] = points
+		                quadraticSegment["resultant"] = resultant
+		                quadraticSegment["p0p1"] = implicitP0P1
+		                quadraticSegment["p1p2"] = implicitP1P2
+		                quadraticSegment["p0p2"] = implicitP0P2
+		                quadraticSegment["positionP1"] = positionP1
 		                quadraticSegment["delta"] = delta
 		                quadraticSegments[#quadraticSegments + 1] = quadraticSegment		                	
 	                end
