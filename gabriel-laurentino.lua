@@ -177,7 +177,7 @@ end
 function bissection(low, high, y, func)
 	local maxIter = 200
 	local nIter = 0
-	local err = 0.0001
+	local err = 0.01
 
 	local mid = (low + high)/2
 	local valueLow = y - func(low)
@@ -214,7 +214,8 @@ function createImplicitLine(initialPoint, endPoint)
 end
 
 function createImplicitPositiveLine(initialPoint, endPoint)
-	if initialPoint[2] > endPoint[2] then return createImplicitLine(endPoint, initialPoint) end
+	local a = endPoint[2] - initialPoint[2]
+	if a < 0 then return createImplicitLine(endPoint, initialPoint) end
 	return createImplicitLine(initialPoint, endPoint)
 end
 
@@ -321,9 +322,10 @@ function quadraticImplicitForm(points, x, y)
 	local y1 = points[2][2] - points[1][2]
 	local x2 = points[3][1] - points[1][1]
 	local y2 = points[3][2] - points[1][2]
+	local w = points[2][3]
 
-	local xp = x - points[1][1]
-	local yp = y - points[1][2]
+	local xp = (x - points[1][1])*w
+	local yp = (y - points[1][2])*w
 
 	-- Cayley-Bézout entries
 	local a11 = 2*xp*y1 - 2*x1*yp
@@ -340,13 +342,10 @@ function quadraticImplicitForm(points, x, y)
 	local orientation = 1
 	if y2 < 0 then orientation = -1 end
 
-	if resultant > 0 then
-		if xDerivative > 0 then return orientation
-		else return 0 end
-	else
-		if xDerivative < 0 then return orientation
-		else return 0 end
+	if (resultant > 0 and xDerivative > 0) or (resultant < 0 and xDerivative < 0) then
+		return orientation
 	end
+	return 0
 
 end
 
@@ -377,8 +376,9 @@ function countQuadratic(segments, x, y)
 	    		elseif positionP1 == 1 then
 	    			if evalLine(pixel, p0p2) < 0 then
 	    				intersections = intersections + delta
-	    			elseif evalLine(pixel, p0p1) > 0 or evalLine(pixel, p1p2) > 0 then
+	    			elseif evalLine(pixel, p0p1) < 0 or evalLine(pixel, p1p2) < 0 then
 	    				intersections = intersections + resultant(x,y)
+	    			else intersections = intersections
 	    			end
 	    		else
 	    			stderr("no positionP1 found")
@@ -698,12 +698,14 @@ local function sample(accelerated, x, y)
          	if testInsideShapeBoundingBox(shapeBoundingBox, x, y) then
 	        	local linearSegmentsIntersections = countIntersections(linearSegments, x, y)
 	        	local quadraticSegmentsIntersections = countQuadratic(quadraticSegments, x, y)
+	        	local rationalSegmentsIntersections = countQuadratic(rationalSegments, x, y)
 
 	        	intersections = linearSegmentsIntersections
 	        					+ quadraticSegmentsIntersections
+	        					+ rationalSegmentsIntersections
 	        					--+ countIntersectionsPath(quadraticSegments, x, y)
 	        					+ countIntersectionsPath(cubicSegments, x, y)
-	        					+ countIntersectionsPath(rationalSegments, x, y)
+	        					--+ countIntersectionsPath(rationalSegments, x, y)
 
 
 	            local intersectionsBool = (intersections ~= 0)
@@ -904,7 +906,7 @@ function _M.accelerate(scene, window, viewport, args)
 	            quadratic_segment = function(self, x0, y0, x1, y1, x2, y2)
 	                --print("", "quadratic_segment", x0, y0, x1, y1, x2, y2)
 
-	                local points = {{x0,y0}, {x1,y1}, {x2,y2}}
+	                local points = {{x0,y0,1}, {x1,y1,1}, {x2,y2,1}}
 
 	                local d_func_x = function(t)
 	                	return bezierDerivative(t, points)[1]
@@ -949,15 +951,23 @@ function _M.accelerate(scene, window, viewport, args)
 						local boundingBox = createBoundingBox(initialPoint,endPoint)
 						shapeBoundingBox = updateBoundingBox(boundingBox, shapeBoundingBox)
 		                
-		                local implicitP0P1 = createImplicitPositiveLine(points[1], points[2])
-		                local implicitP1P2 = createImplicitPositiveLine(points[2], points[3])
-		                local implicitP0P2 = createImplicitPositiveLine(points[1], points[3])
+		                local implicitP0P1 = createImplicitPositiveLine(newPoints[1], newPoints[2])
+		                local implicitP1P2 = createImplicitPositiveLine(newPoints[2], newPoints[3])
+		                local implicitP0P2 = createImplicitPositiveLine(newPoints[1], newPoints[3])
 		                local positionP1 = 1
 
-		                if evalLine(points[2], implicitP0P2) < 0 then
+		                if evalLine(newPoints[2], implicitP0P2) < 0 then
 		                	positionP1 = -1
 		                end
 		                
+		                print("poisitionP1 = ", positionP1)
+		                print("p0p2", implicitP0P2[1])
+		                print("p0p1", implicitP0P1[1], implicitP0P1[2], implicitP0P1[3])
+		                print("p1p2", implicitP1P2[1])
+		                print("eval p0p1", evalLine({100,80},implicitP0P1))
+		                print("eval p0p1", evalLine({80,110},implicitP0P1))
+		                print("eval p0p1", evalLine(newPoints[2],implicitP0P1))
+
 		                local delta = 1
 		                if initialPoint[2] > endPoint[2] then
 		                	delta = -1
@@ -966,7 +976,7 @@ function _M.accelerate(scene, window, viewport, args)
 		                local quadraticSegment = {}
 
 		                quadraticSegment["boundingBox"] = boundingBox
-		                quadraticSegment["controlPoints"] = points
+		                quadraticSegment["controlPoints"] = newPoints
 		                quadraticSegment["resultant"] = resultant
 		                quadraticSegment["p0p1"] = implicitP0P1
 		                quadraticSegment["p1p2"] = implicitP1P2
@@ -1072,8 +1082,7 @@ function _M.accelerate(scene, window, viewport, args)
 	            end,
 	            rational_quadratic_segment = function(self, x0, y0, x1, y1, w1,
 	                x2, y2)
-	                print("", "rational_quadratic_segment", x0, y0, x1, y1, w1,
-	                    x2, y2)
+	                --print("", "rational_quadratic_segment", x0, y0, x1, y1, w1, x2, y2)
 
 	                local points = {{x0,y0,1},{x1,y1,w1},{x2,y2,1}}
 
@@ -1148,16 +1157,27 @@ function _M.accelerate(scene, window, viewport, args)
 	                		end
 	                	end
 
-	                	for k,v in pairs(newPoints) do
-	                		print("v", v[3])
+	                	print("", "rational_segments", newPoints[1][1], newPoints[1][2],
+	                		newPoints[2][1], newPoints[2][2], newPoints[2][3], newPoints[3][1], newPoints[3][2])
+
+	                	local resultant = function(s, t)
+	                		return quadraticImplicitForm(newPoints, s, t)
 	                	end
 
-	                	--local wCoord = newPoints[2][3]
-	                	--print("wCoord", wCoord)
 	                	local initialPoint = newPoints[1]
 	                	local endPoint = newPoints[#newPoints]
 
 						local boundingBox = createBoundingBox(initialPoint,endPoint)
+						shapeBoundingBox = updateBoundingBox(boundingBox, shapeBoundingBox)
+		                
+		                local implicitP0P1 = createImplicitPositiveLine(newPoints[1], newPoints[2])
+		                local implicitP1P2 = createImplicitPositiveLine(newPoints[2], newPoints[3])
+		                local implicitP0P2 = createImplicitPositiveLine(newPoints[1], newPoints[3])
+		                local positionP1 = 1
+
+		                if evalLine(newPoints[2], implicitP0P2) < 0 then
+		                	positionP1 = -1
+		                end
 		                
 		                local delta = 1
 		                if initialPoint[2] > endPoint[2] then
@@ -1179,8 +1199,14 @@ function _M.accelerate(scene, window, viewport, args)
 		                local rationalSegment = {}
 
 		                rationalSegment["boundingBox"] = boundingBox
-		                rationalSegment["func_x"] = func_x
-		                rationalSegment["func_y"] = func_y
+						rationalSegment["controlPoints"] = points
+		                rationalSegment["resultant"] = resultant
+		                rationalSegment["p0p1"] = implicitP0P1
+		                rationalSegment["p1p2"] = implicitP1P2
+		                rationalSegment["p0p2"] = implicitP0P2
+		                rationalSegment["positionP1"] = positionP1
+		                --rationalSegment["func_x"] = func_x
+		                --rationalSegment["func_y"] = func_y
 		                rationalSegment["delta"] = delta
 		                rationalSegments[#rationalSegments + 1] = rationalSegment		                	
 	                end
