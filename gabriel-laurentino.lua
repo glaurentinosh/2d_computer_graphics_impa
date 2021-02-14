@@ -252,8 +252,8 @@ function bissection(low, high, y, func)
 		valueMid = y - func(mid)
 	until math.abs(valueMid) < err or nIter > maxIter 
 
-	return mid
-	--return tonumber(string.format("%.2f", mid))
+	--return mid
+	return tonumber(string.format("%.2f", mid))
 end
 
 function evalLine(point, line)
@@ -512,6 +512,44 @@ function countQuadratic(segments, x, y)
 
 	end
 	return intersections
+end
+
+function foo()
+	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+	    	if (x < boundingBox["Xmin"]) then
+	    		intersections = intersections + delta
+	    	else
+	    		local triangleTest = triangleTest(controlPoints[1], controlPoints[2], controlPoints[3], pixel)
+	    		if positionP1[1] == -1 then -- left positionP1
+	    			if triangleTest == 1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+	    		elseif positionP1[1] == 1 then -- right positionP1
+	    			if triangleTest == -1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+		    	end
+	    	end
+	    end
+end
+
+function triangleTest(p0,p1,p2,p)
+	local p0p1p2 = triangleArea(p0,p1,p2)
+	local p0pp2 = triangleArea(p0,p,p2)
+	local p0p1p = triangleArea(p0,p1,p)
+	local pp1p2 = triangleArea(p,p1,p2)
+
+	if (p0p1p2 > 0 and p0pp2 > 0) or (p0p1p2 > 0 and p0pp2 > 0) then
+		if math.abs(p0p1p2) == math.abs(p0pp2)+math.abs(p0p1p)+math.abs(pp1p2) then
+			return 0 -- inside triangle
+		else return 1 end-- same side
+	else return -1 end -- opposite side
+end
+
+function triangleArea(p0,p1,p2)
+	return 0.5*((p1[1]*p2[2] - p2[1]*p1[2])
+			- (p0[1]*p2[2] - p0[2]*p2[1])
+			+ (p0[1]*p1[2] - p0[2]*p1[1]))
 end
 
 function checkPosition(point, line)
