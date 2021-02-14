@@ -301,7 +301,7 @@ end
 function pointsAreColinear(points)
 	local line = createImplicitPositiveLine(points[1], points[#points])
 	for i=2,#points-1 do
-		if evalLine(points[i], line) ~= 0 then
+		if math.abs(evalLine(points[i], line)) > 0.001 then
 			return false
 		end
 	end
@@ -348,6 +348,10 @@ function printBoundingBox(boundingBox)
 	print(boundingBox["Xmin"], boundingBox["Xmax"],boundingBox["Ymin"], boundingBox["Ymax"])
 end
 
+function printPairs(list)
+	for k,v in pairs(list) do print(v) end
+end
+
 function innerProduct(v1, v2)
     result = 0
     for i=1,#v1 do
@@ -384,11 +388,46 @@ function rationalQuadraticImplicitForm(points, x, y)
 	-- Translate P0 to origin	
 	local intersections = 0
 
-	local x1 = points[2][1] - points[1][1]
-	local y1 = points[2][2] - points[1][2]
+	local w1 = points[2][3]
+	local x1 = points[2][1] - points[1][1]*w1
+	local y1 = points[2][2] - points[1][2]*w1
 	local x2 = points[3][1] - points[1][1]
 	local y2 = points[3][2] - points[1][2]
+
+	local xp = x - points[1][1]
+	local yp = y - points[1][2]
+
+	-- Cayley-Bézout entries
+	local a11 = 2*(xp*y1 - x1*yp)
+	local a22 = 2*((x2*y1 - x1*y2) + (1 - w1)*(x2*yp - xp*y2))
+	local a12 = (2*x1 - x2)*yp - (2*y1 - y2)*xp
+
+	-- Orientation given by partial derivative in x
+	local xDerivative = -(x2*y1 - x1*y2)*(2*y2 + (2*y1 - y2)*(1-w1))
+
+	-- resultant is the determinant
+	local resultant = a11*a22 - a12*a12
+
+	-- initialPoint[2] - endPoint[2]
+	local orientation = 1
+	if y2 < 0 then orientation = -1 end
+
+	if (resultant > 0 and xDerivative > 0) or (resultant < 0 and xDerivative < 0) then
+		return orientation
+	end
+	return 0
+end
+
+
+function rationalQuadraticImplicitForm2(points, x, y)
+	-- Translate P0 to origin	
+	local intersections = 0
+
 	local w1 = points[2][3]
+	local x1 = points[2][1] - points[1][1]*w1
+	local y1 = points[2][2] - points[1][2]*w1
+	local x2 = points[3][1] - points[1][1]
+	local y2 = points[3][2] - points[1][2]
 
 	local xp = x - points[1][1]
 	local yp = y - points[1][2]
@@ -424,7 +463,7 @@ function rationalQuadraticImplicitForm(points, x, y)
 
 end
 
-function quadraticImplicitForm(points, x, y)
+function quadraticImplicitForm2(points, x, y)
 	-- Get determinant of Cayley Bezout
 	-- Translate P0 to origin
 	local intersections = 0
@@ -474,6 +513,32 @@ function countQuadratic(segments, x, y)
 		local positionP1 = segment["positionP1"]
 		local controlPoints = segment["controlPoints"]
 
+		local p0 = controlPoints[1]
+		local p1 = controlPoints[2]
+		local p2 = controlPoints[3]
+
+	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+	    	if (x < boundingBox["Xmin"]) then
+	    		intersections = intersections + delta
+	    	else
+	    		local triangleTest = triangleTest(p0,p1,p2, pixel)
+	    		if positionP1[1] == -1 then -- left positionP1
+	    			if triangleTest == 1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+	    		elseif positionP1[1] == 1 then -- right positionP1
+	    			if triangleTest == -1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+		    	end
+	    	end
+	    end
+
+	end
+	return intersections
+end
+
+function foo2()
 	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
 	    	if (x < boundingBox["Xmin"]) then
 	    		intersections = intersections + delta
@@ -509,28 +574,6 @@ function countQuadratic(segments, x, y)
 		    	end
 	    	end
 	    end
-
-	end
-	return intersections
-end
-
-function foo()
-	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
-	    	if (x < boundingBox["Xmin"]) then
-	    		intersections = intersections + delta
-	    	else
-	    		local triangleTest = triangleTest(controlPoints[1], controlPoints[2], controlPoints[3], pixel)
-	    		if positionP1[1] == -1 then -- left positionP1
-	    			if triangleTest == 1 then intersections = intersections + delta
-	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
-	    			end
-	    		elseif positionP1[1] == 1 then -- right positionP1
-	    			if triangleTest == -1 then intersections = intersections + delta
-	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
-	    			end
-		    	end
-	    	end
-	    end
 end
 
 function triangleTest(p0,p1,p2,p)
@@ -539,11 +582,17 @@ function triangleTest(p0,p1,p2,p)
 	local p0p1p = triangleArea(p0,p1,p)
 	local pp1p2 = triangleArea(p,p1,p2)
 
-	if (p0p1p2 > 0 and p0pp2 > 0) or (p0p1p2 > 0 and p0pp2 > 0) then
-		if math.abs(p0p1p2) == math.abs(p0pp2)+math.abs(p0p1p)+math.abs(pp1p2) then
+	--if p0p1p2 ~= pp1p2 + p0pp2 + p0p1p then print("somethings wrong") end
+
+	if isSameSign(p0p1p2, p0pp2) then
+		if isSameSign(p0p1p2, p0pp2) and isSameSign(p0p1p2, p0pp2) then
 			return 0 -- inside triangle
-		else return 1 end-- same side
+		else return 1 end -- same side
 	else return -1 end -- opposite side
+end
+
+function isSameSign(m,n)
+	return (m > 0 and n > 0) or (m < 0 and n < 0)
 end
 
 function triangleArea(p0,p1,p2)
@@ -1130,7 +1179,7 @@ function _M.accelerate(scene, window, viewport, args)
 		                	print("transformed", "quadratic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
 
 		                	local resultant = function(s, t)
-		                		return quadraticImplicitForm(newPoints, s, t)
+		                		return rationalQuadraticImplicitForm(newPoints, s, t)
 		                	end
 
 		                	local initialPoint = newPoints[1]
@@ -1145,7 +1194,10 @@ function _M.accelerate(scene, window, viewport, args)
 			                
 			                local positionP1 = checkPosition(newPoints[2], implicitP0P2)
 
-			                print("positionP1", positionP1[1], positionP1[2])
+			                print("triangleArea", triangleArea(newPoints[1], newPoints[2], newPoints[3]))
+			                print("evalLine", evalLine(newPoints[2], implicitP0P2))
+
+--[[			                print("positionP1", positionP1[1], positionP1[2])
 							print("resultant", resultant(newPoints[2][1],newPoints[2][2]))
 							print("line p0p2", implicitP0P2[1], implicitP0P2[2], implicitP0P2[3])
 
@@ -1175,7 +1227,7 @@ function _M.accelerate(scene, window, viewport, args)
 			                if isAboveLine({82,20}, implicitP1P2) then
 			                	print("pixel is above p1p2")
 			                	print("resultant", resultant(82, 20))
-			                end
+			                end--]]
 
 			                
 			                local delta = getOrientation(initialPoint, endPoint)
@@ -1301,10 +1353,6 @@ function _M.accelerate(scene, window, viewport, args)
 
 	            	local criticalPoints = getCriticalPoints(d_func_x_w, d_func_y_w, {0,1})
 
-	            	for k,v in pairs(criticalPoints) do
-	            		print(v)
-	            	end
-
 
 	                for i=2,#criticalPoints do -- create rational segments
 	                	local newPoints = reparametrization(criticalPoints[i-1], criticalPoints[i], points)
@@ -1313,7 +1361,7 @@ function _M.accelerate(scene, window, viewport, args)
 
 		                	local w2 = newPoints[3][3]
 		                	local w0 = newPoints[1][3]
-		                	print("w0, w2", w0, w2)
+		                	--print("w0, w2", w0, w2)
 
 		                	local lambda = math.sqrt(w2/w0)
 
@@ -1325,6 +1373,9 @@ function _M.accelerate(scene, window, viewport, args)
 
 		                	print("", "rational_segments", newPoints[1][1], newPoints[1][2],
 		                		newPoints[2][1], newPoints[2][2], newPoints[2][3], newPoints[3][1], newPoints[3][2])
+
+
+		                	--print(newPoints[1][3], newPoints[2][3], newPoints[3][3])
 
 		                	local resultant = function(s, t)
 		                		return rationalQuadraticImplicitForm(newPoints, s, t)
