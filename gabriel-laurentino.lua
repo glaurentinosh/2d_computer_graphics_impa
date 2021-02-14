@@ -384,7 +384,7 @@ function countIntersections(segments, x, y)
 	return intersections
 end
 
-function rationalQuadraticImplicitForm(points, x, y)
+function quadraticImplicitForm3(points, x, y)
 	-- Translate P0 to origin	
 	local intersections = 0
 
@@ -403,7 +403,7 @@ function rationalQuadraticImplicitForm(points, x, y)
 	local a12 = (2*x1 - x2)*yp - (2*y1 - y2)*xp
 
 	-- Orientation given by partial derivative in x
-	local xDerivative = -(x2*y1 - x1*y2)*(2*y2 + (2*y1 - y2)*(1-w1))
+	local xDerivative = (x2*y1 - x1*y2)*(2*y2 + (2*y1 - y2)*(1-w1))
 
 	-- resultant is the determinant
 	local resultant = a11*a22 - a12*a12
@@ -419,7 +419,7 @@ function rationalQuadraticImplicitForm(points, x, y)
 end
 
 
-function rationalQuadraticImplicitForm2(points, x, y)
+function quadraticImplicitForm(points, x, y)
 	-- Translate P0 to origin	
 	local intersections = 0
 
@@ -463,16 +463,16 @@ function rationalQuadraticImplicitForm2(points, x, y)
 
 end
 
-function quadraticImplicitForm2(points, x, y)
+function quadraticImplicitForm1(points, x, y)
 	-- Get determinant of Cayley Bezout
 	-- Translate P0 to origin
 	local intersections = 0
 
-	local x1 = points[2][1] - points[1][1]
-	local y1 = points[2][2] - points[1][2]
+	local w1 = points[2][3]
+	local x1 = points[2][1] - points[1][1]*w1
+	local y1 = points[2][2] - points[1][2]*w1
 	local x2 = points[3][1] - points[1][1]
 	local y2 = points[3][2] - points[1][2]
-	local w = points[2][3]
 
 	local xp = x - points[1][1]
 	local yp = y - points[1][2]
@@ -514,7 +514,7 @@ function countQuadratic(segments, x, y)
 		local controlPoints = segment["controlPoints"]
 
 		local p0 = controlPoints[1]
-		local p1 = controlPoints[2]
+		local p1 = RP2ToR2(controlPoints[2])
 		local p2 = controlPoints[3]
 
 	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
@@ -644,6 +644,11 @@ function getOrientation(initialPoint, endPoint)
 	if initialPoint[2] > endPoint[2] then return -1 end
 	return 1
 end
+
+function RP2ToR2(point)
+	return {point[1]/point[3], point[2], point[3], 1}
+end
+
 
 function countIntersectionsPath(segments, x, y)
 	local intersections = 0
@@ -1113,6 +1118,7 @@ function _M.accelerate(scene, window, viewport, args)
             end
 
             myAccelerated[shape_index]["shapeType"] = shapeType
+
         	local pdata = shape:as_path_data()
         	--local xf = shape:get_xf():transformed(scene:get_xf())
 
@@ -1179,7 +1185,7 @@ function _M.accelerate(scene, window, viewport, args)
 		                	print("transformed", "quadratic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
 
 		                	local resultant = function(s, t)
-		                		return rationalQuadraticImplicitForm(newPoints, s, t)
+		                		return quadraticImplicitForm(newPoints, s, t)
 		                	end
 
 		                	local initialPoint = newPoints[1]
@@ -1196,39 +1202,6 @@ function _M.accelerate(scene, window, viewport, args)
 
 			                print("triangleArea", triangleArea(newPoints[1], newPoints[2], newPoints[3]))
 			                print("evalLine", evalLine(newPoints[2], implicitP0P2))
-
---[[			                print("positionP1", positionP1[1], positionP1[2])
-							print("resultant", resultant(newPoints[2][1],newPoints[2][2]))
-							print("line p0p2", implicitP0P2[1], implicitP0P2[2], implicitP0P2[3])
-
-			                if isBelowLine({82,20}, implicitP0P2) then
-			                	print("pixel is below p0p2")
-			                	print("resultant", resultant(82, 20))
-			                end
-			                if isAboveLine({82,20}, implicitP0P2) then
-			                	print("pixel is above p0p2")
-			                	print("resultant", resultant(82, 20))
-			                end
-
-
-			                if isBelowLine({82,20}, implicitP0P1) then
-			                	print("pixel is below p0p1")
-			                	print("resultant", resultant(82, 20))
-			                end
-			                if isAboveLine({82,20}, implicitP0P1) then
-			                	print("pixel is above p0p1")
-			                	print("resultant", resultant(82, 20))
-			                end
-
-			                if isBelowLine({82,20}, implicitP1P2) then
-			                	print("pixel is below p1p2")
-			                	print("resultant", resultant(82, 20))
-			                end
-			                if isAboveLine({82,20}, implicitP1P2) then
-			                	print("pixel is above p1p2")
-			                	print("resultant", resultant(82, 20))
-			                end--]]
-
 			                
 			                local delta = getOrientation(initialPoint, endPoint)
 
@@ -1378,7 +1351,7 @@ function _M.accelerate(scene, window, viewport, args)
 		                	--print(newPoints[1][3], newPoints[2][3], newPoints[3][3])
 
 		                	local resultant = function(s, t)
-		                		return rationalQuadraticImplicitForm(newPoints, s, t)
+		                		return quadraticImplicitForm(newPoints, s, t)
 		                	end
 
 		                	local initialPoint = newPoints[1]
@@ -1386,25 +1359,13 @@ function _M.accelerate(scene, window, viewport, args)
 
 							local boundingBox = createBoundingBox(initialPoint,endPoint)
 							shapeBoundingBox = updateBoundingBox(boundingBox, shapeBoundingBox)
-			                
+
 			                local implicitP0P1 = createImplicitPositiveLine(newPoints[1], newPoints[2])
 			                local implicitP1P2 = createImplicitPositiveLine(newPoints[2], newPoints[3])
 			                local implicitP0P2 = createImplicitPositiveLine(newPoints[1], newPoints[3])
-			                local positionP1 = checkPosition(newPoints[2], implicitP0P2)
+			                local positionP1 = checkPosition(RP2ToR2(newPoints[2]), implicitP0P2)
 			                
 			                local delta = getOrientation(initialPoint, endPoint)
-
---[[			                local func_w = function(t)
-			                	return bezier(t, newPoints)[3]
-			                end
-
-			                local func_x = function(t)
-			                	return bezier(t, newPoints)[1]/func_w(t)
-			                end
-
-			                local func_y = function(t)
-			                	return bezier(t, newPoints)[2]/func_w(t)
-			                end--]]
 			                
 			                local rationalSegment = {}
 
