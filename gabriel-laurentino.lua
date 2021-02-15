@@ -2,6 +2,7 @@ local facade = require"facade"
 local image = require"image"
 local chronos = require"chronos"
 local filter = require"filter"
+local blue = require"blue"
 
 local unpack = table.unpack
 local floor = math.floor
@@ -313,15 +314,11 @@ function arePointsEqual(p1, p2)
 end
 
 function getFirstTangent(points)
-	print("in firstTangent")
 	if not arePointsEqual(points[1], points[2]) then
-		print("p0p1")
 		return createImplicitPositiveLine(points[1], points[2])
 	elseif not arePointsEqual(points[1], points[3]) then
-		print("p0p2")
 		return createImplicitPositiveLine(points[1], points[3])
 	elseif not arePointsEqual(points[1], points[4]) then
-		print("p0p3")
 		return createImplicitPositiveLine(points[1], points[4])
 	else
 		print("degeneration")
@@ -329,15 +326,11 @@ function getFirstTangent(points)
 end
 
 function getLastTangent(points)
-	print("in lastTangent")
 	if not arePointsEqual(points[4], points[3]) then
-		print("p3p2")
 		return createImplicitPositiveLine(points[4], points[3])
 	elseif not arePointsEqual(points[4], points[2]) then
-		print("p3p1")
 		return createImplicitPositiveLine(points[4], points[2])
 	elseif not arePointsEqual(points[1], points[4]) then
-		print("p3p0")
 		return createImplicitPositiveLine(points[1], points[4])
 	else
 		print("degeneration")
@@ -1060,14 +1053,25 @@ end
 -- SAMPLE
 -------------------
 
-local function sample(accelerated, x, y)
+function mixColors(colorsToMix)
+	local R = 0
+	local G = 0
+	local B = 0
+	local size = 1/#colorsToMix
+	for i=1,#colorsToMix do
+		R = R + colorsToMix[i][1]
+		G = G + colorsToMix[i][2]
+		B = B + colorsToMix[i][3]
+	end
+	R = R*size
+	G = G*size
+	B = B*size
+	return R, G, B, 1
+end
+
+local function preSample(accelerated, x, y)
     -- This function should return the color of the sample
     -- at coordinates (x,y).
-    -- Here, we simply return r = g = b = a = 1.
-    -- It is up to you to compute the correct color!
-
-    --stderr("\r%s\r%s",x,y)
-    -- local edges = myAccelerated["edges"]
 
     local colors = {}
     --table.insert(colors, background:get_solid_color())
@@ -1090,15 +1094,10 @@ local function sample(accelerated, x, y)
          	local shapeBoundingBox = shapeAccelerated["shapeBoundingBox"]
 
          	if testIndideBoundingBox(shapeBoundingBox, x, y) then
-	        	local linearSegmentsIntersections = countIntersections(linearSegments, x, y)
-	        	local quadraticSegmentsIntersections = countQuadratic(quadraticSegments, x, y)
-	        	local rationalSegmentsIntersections = countQuadratic(rationalSegments, x, y)
-	        	local cubicSegmentsIntersections = countCubic(cubicSegments, x, y)
-
-	        	intersections = linearSegmentsIntersections
-	        					+ quadraticSegmentsIntersections
-	        					+ rationalSegmentsIntersections
-	        					+ cubicSegmentsIntersections
+	        	intersections = countIntersections(linearSegments, x, y)
+	        					+ countQuadratic(quadraticSegments, x, y)
+	        					+ countQuadratic(rationalSegments, x, y)
+	        					+ countCubic(cubicSegments, x, y)
 
 	        	--intersections = paintBoundingBoxes(linearSegments,x,y)+paintBoundingBoxes(quadraticSegments,x,y)+paintBoundingBoxes(rationalSegments,x,y)+paintBoundingBoxes(cubicSegments,x,y)
 
@@ -1134,24 +1133,34 @@ local function sample(accelerated, x, y)
 						local colorFound = sampledColors[sampleIndex]
 						--if t_ramp == 0 then print("cor encontrada", colorFound, "", sampleIndex) end
 						table.insert(colors, colorFound)
+	                elseif paint:get_type() == paint_type.texture then
+	                	--print("texture")
 	                else
 	                	print("unknown paint")
 	                end
 	            end
          	end
-
             shape_index = shape_index + 1
         end
     }
-    
     if ( #colors > 0 ) then
     	local colorReturned = calculateColor(colors)
     	--print(table.unpack(colorReturned))
-        return table.unpack(colorReturned)
+        return colorReturned--table.unpack(colorReturned)
     end
-    return table.unpack(background:get_solid_color()) -- no color painted
+    return background:get_solid_color() --table.unpack(background:get_solid_color()) -- no color painted
 end
 
+local function sample(accelerated, x, y)
+	local blueSize = 16
+	local colorsToMix = {}
+	for i=1,blueSize do
+		local dx = blue[blueSize].x[i]
+		local dy = blue[blueSize].x[i]
+		table.insert(colorsToMix, preSample(accelerated, x + dx, y + dy))
+	end
+	return mixColors(colorsToMix)
+end
 -------------------
 --
 ------------------
@@ -1240,27 +1249,31 @@ function _M.accelerate(scene, window, viewport, args)
 
             print("transformation depth", #transformationStack)
         	
-
             if paint:get_type() == paint_type.linear_gradient then
             	local sampledColors = getLinearGradientInfo(paint)
             	myAccelerated[shape_index]["sampledColors"] = sampledColors
-            end
-
-            if paint:get_type() == paint_type.radial_gradient then
+            elseif paint:get_type() == paint_type.radial_gradient then
             	local radialGradient = getRadialGradientInfo(paint)
             	myAccelerated[shape_index]["sampledColors"] = radialGradient["sampledColors"]
             	myAccelerated[shape_index]["simplerXf"] = radialGradient["simplerXf"]*paint:get_xf():inverse()*scene:get_xf():inverse()--*xf:inverse()
             	myAccelerated[shape_index]["newCx"] = radialGradient["newCx"]
+            elseif paint:get_type() == paint_type.texture then
+    	        local tex = paint:get_texture_data()
+		        print("", tex:get_spread())
+		        local img = tex:get_image()
+		        print("", "image", img:get_width(), img:get_height(), img:get_num_channels())
+--[[		        for i = 1, img:get_height() do
+		            for j = 1, img:get_width() do
+		                print("", "", j, i, img:get_pixel(j, i))
+		            end
+		        end--]]
+		        local opacity = paint:get_opacity()
+		        print("", opacity)
             end
 
             myAccelerated[shape_index]["shapeType"] = shapeType
 
-            print("teste triangleTEst avulso", triangleTest({2,0}, {0,0}, {1,1}, {0.5, 0.5}))
-
         	local pdata = shape:as_path_data()
-        	--local xf = shape:get_xf():transformed(scene:get_xf())
-
-        	--myAccelerated[shape_index]["dealAs"] = "boundingBox"
 
         	local beginContour = {}
         	local endOpenContour = {}
@@ -1315,7 +1328,6 @@ function _M.accelerate(scene, window, viewport, args)
 				    local d_func_x = function(t)
 				    	return bezierDerivative(t, points)[1]
 				    end
-
 				    local d_func_y = function(t)
 				    	return bezierDerivative(t, points)[2]
 				    end
@@ -1330,8 +1342,7 @@ function _M.accelerate(scene, window, viewport, args)
                 					newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
 		                	local quadraticSegment = getQuadraticSegment(newPoints)
 	                		shapeBoundingBox = updateBoundingBox(quadraticSegment["boundingBox"], shapeBoundingBox)
-			                quadraticSegments[#quadraticSegments + 1] = quadraticSegment
-							print("countQuadratic", countQuadratic(quadraticSegments, 82, 20), "size", #quadraticSegments)		                	
+			                quadraticSegments[#quadraticSegments + 1] = quadraticSegment	                	
 		            	else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
 			                print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
@@ -1354,7 +1365,7 @@ function _M.accelerate(scene, window, viewport, args)
 	                end
 
 	                local secondExtremePoints = getMonotonicIntervals(d2_func_x, d2_func_y)
-	                print("secondExtremePoints", table.unpack(secondExtremePoints))
+	                --print("secondExtremePoints", table.unpack(secondExtremePoints))
 
                     -- bissect intervals
 				    local d_func_x = function(t)
@@ -1373,14 +1384,14 @@ function _M.accelerate(scene, window, viewport, args)
 	                table.sort(criticalPoints)
 	                criticalPoints = removeRepeatedValuesInSortedList(criticalPoints)
 
-	                print("criticalPoints", table.unpack(criticalPoints))
+	                --print("criticalPoints", table.unpack(criticalPoints))
 
 	                for i=2,#criticalPoints do -- create quadratic segments
 	                	local newPoints = reparametrization(criticalPoints[i-1], criticalPoints[i], points)
 
 	                	if pointsAreColinear(newPoints) then
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[4])
-			                print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[4][1], newPoints[4][2])
+			                --print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[4][1], newPoints[4][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
 			                linearSegments[#linearSegments + 1] = linearSegment
 			            elseif pointsAreQuadratic(newPoints) then
@@ -1395,8 +1406,8 @@ function _M.accelerate(scene, window, viewport, args)
 	                	elseif not (arePointsEqual(newPoints[1], newPoints[2]) and
 	                				arePointsEqual(newPoints[2], newPoints[3]) and
 	                				arePointsEqual(newPoints[3], newPoints[4])) then
-		                	print("transformed", "cubic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2],
-		                											newPoints[3][1], newPoints[3][2], newPoints[4][1], newPoints[4][2])
+		                	--print("transformed", "cubic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2],
+		                	--										newPoints[3][1], newPoints[3][2], newPoints[4][1], newPoints[4][2])
 
 		                	local initialPoint = newPoints[1]
 		                	local endPoint = newPoints[#newPoints]
@@ -1411,23 +1422,9 @@ function _M.accelerate(scene, window, viewport, args)
 			                local firstTangent = getFirstTangent(newPoints)
 			                local lastTangent = getLastTangent(newPoints)
 
-			                print("firstTangent", table.unpack(firstTangent))
-			                print("lastTangent", table.unpack(lastTangent))
-
 				            local diagonalLine = createImplicitPositiveLine(newPoints[1], newPoints[4])
 			                local vertex = intersectionBetweenLines(firstTangent, lastTangent)
 			                local positionVertex = checkPosition(vertex, diagonalLine)
-
-			                print("vertex", table.unpack(vertex))
-			                print("positionVertex", table.unpack(positionVertex))
-
-			                --print("resultant", resultant(100,40))
-
-			                --print("checking countCubic", countCubic(cubicSegments, 100,40), ": considering" , #cubicSegments, "segments")
-			                print("resultant 205.5 50", resultant(205.5, 50))
-			                print("triangleArea pixel", triangleArea(newPoints[2], newPoints[4], {205.5, 50}))
-			                print("triangleArea norm", triangleArea(newPoints[2], newPoints[4], newPoints[1]))
-			                print("triangleTest", triangleTest(newPoints[1], newPoints[2], newPoints[4] , {205.5, 50}))
 
 			                local delta = getOrientation(initialPoint,endPoint)
 			                
@@ -1506,19 +1503,13 @@ function _M.accelerate(scene, window, viewport, args)
 		                		end
 		                	end
 
-		                	print("transformed", "rational_segments", newPoints[1][1], newPoints[1][2],
-		                		newPoints[2][1], newPoints[2][2], newPoints[2][3], newPoints[3][1], newPoints[3][2])
-
 		                	local rationalSegment = getQuadraticSegment(newPoints)
-
-			                print("vertex", table.unpack(RP2ToR2(newPoints[2])))
-			                print("positionVertex", table.unpack(rationalSegment["positionVertex"]))
 
 							shapeBoundingBox = updateBoundingBox(rationalSegment["boundingBox"], shapeBoundingBox)
 			                rationalSegments[#rationalSegments + 1] = rationalSegment
 						else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
-			                print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
+			                --print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
 			                linearSegments[#linearSegments + 1] = linearSegment
 			            end
