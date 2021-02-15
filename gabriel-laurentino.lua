@@ -42,20 +42,6 @@ function bezier(t, points) -- De Casteljou
 	return bezier_list[m+1][1]
 end
 
-function bezierMatrix(points)
-	if #points == 3 then
-		local controlPointsBernsteinBasis = projectivity(points[1][1], points[2][1], points[3][1], 
-											points[1][2], points[2][2], points[3][2],
-											points[1][3], points[2][3], points[3][3])
-
-		local powerBasisToBernsteinBasis = projectivity(1, -2, 1,
-														0, 2, -2,
-														0, 0, 1)
-
-		return controlPointsBernsteinBasis * powerBasisToBernsteinBasis
-	end
-end
-
 function bezierDerivative(t, points)
 	local newPoints = {}
 	local N = #points - 1
@@ -69,42 +55,6 @@ function bezierDerivative(t, points)
 	end
 
 	return bezier(t, newPoints)
-end
-
-function bezierDerivativeMatrix(points)
-	local newPoints = {}
-	local N = #points - 1
-	for i = 1,N do
-		newPoints[i] = {}
-		for l = 1,#points[1] do -- for each coordinate
-			newPoints[i][l] = N*(points[i+1][l] - points[i][l])
-		end
-	end
-	return bezierMatrix(newPoints)
-end
-
-function getResultant(points)
-    local bezMatrix = bezierMatrix(points)
-
-    local fx = {bezMatrix[1],bezMatrix[2],bezMatrix[3]}
-    local gy = {bezMatrix[4],bezMatrix[5],bezMatrix[6]}
-
-    local resultantDet = function(x, y)
-    	local firstDet = projectivity(fx[1] - x, gy[2], gy[1] - y,
-    									fx[2], gy[3], gy[2],
-    									fx[3], 0, gy[3]):det()
-
-
-    	local secondDet = projectivity(fx[2], fx[1] - x, gy[1] - y,
-    									fx[3], fx[2], gy[2],
-    									0, fx[3], gy[3]):det()
-
-    	local det = (fx[1] - x)*firstDet + (gy[1] - y)*secondDet
-
-    	return det
-    end
-
-    return resultantDet
 end
 
 function bezierSecondDerivative(t, points)
@@ -174,33 +124,58 @@ function reparametrization(r, s, points)
 	return newPoints
 end
 
-function getInflexionPoints(d2_func_x, d2_func_y)
+function getCriticalPointsInMonotonicIntervals(funcX, funcY, extremePoints)
+	criticalPoints = {0,1}
+
+    for i=2,#extremePoints do
+        local low = extremePoints[i-1]
+        local high = extremePoints[i]
+
+        table.insert(criticalPoints, low) -- insert inflectionPoints
+        -- check critical points in x
+        if (funcX(low) < 0 and funcX(high) > 0) or (funcX(low) > 0 and funcX(high) < 0) then
+        	local crit_x = bissection(low, high, 0, funcX)
+        	table.insert(criticalPoints, crit_x)
+        end
+        -- check critical points in y
+        if (funcY(low) < 0 and funcY(high) > 0) or (funcY(low) > 0 and funcY(high) < 0) then
+        	local crit_y = bissection(low, high, 0, funcY)
+        	table.insert(criticalPoints, crit_y)
+        end
+
+		table.insert(criticalPoints, high) -- insert inflectionPoints
+    end
+    table.sort(criticalPoints)
+    return criticalPoints
+end
+
+function getMonotonicIntervals(d2_func_x, d2_func_y)
     -- find if second derivates have a root (it's a line)
-    local inflexionPoints = {0, 1}
+    local extremePoints = {0, 1}
     -- check critical points in x
     if (d2_func_x(0) < 0 and d2_func_x(1) > 0) or (d2_func_x(0) > 0 and d2_func_x(1) < 0) then
     	local crit_x = bissection(0, 1, 0, d2_func_x)
-    	table.insert(inflexionPoints, crit_x)
+    	table.insert(extremePoints, crit_x)
     end
-
     -- check critical points in y
     if (d2_func_y(0) < 0 and d2_func_y(1) > 0) or (d2_func_y(0) > 0 and d2_func_y(1) < 0) then
     	local crit_y = bissection(0, 1, 0, d2_func_y)
-    	table.insert(inflexionPoints, crit_y)
+    	table.insert(extremePoints, crit_y)
     end
-
     -- sort bissection extreme points 
-    table.sort(inflexionPoints)
-
-    return removeRepeatedValuesInSortedList(inflexionPoints)
+    table.sort(extremePoints)
+    return removeRepeatedValuesInSortedList(extremePoints)
 end
 
-function getCriticalPoints(d_func_x, d_func_y, inflexionPoints)
-    local criticalPoints = {0, 1} -- critical points in t for bounding boxes
+function getCriticalPoints(d_func_x, d_func_y, extremePoints)
+    local criticalPoints = {0,1} -- critical points in t for bounding boxes
 
-    for i=2,#inflexionPoints do
-        local low = inflexionPoints[i-1]
-        local high = inflexionPoints[i]
+    for i=2,#extremePoints do
+        local low = extremePoints[i-1]
+        local high = extremePoints[i]
+
+        table.insert(criticalPoints, low) -- insert inflectionPoints
+
         -- check critical points in x
         if (d_func_x(low) < 0 and d_func_x(high) > 0) or (d_func_x(low) > 0 and d_func_x(high) < 0) then
         	local crit_x = bissection(low, high, 0, d_func_x)
@@ -212,9 +187,11 @@ function getCriticalPoints(d_func_x, d_func_y, inflexionPoints)
         	local crit_y = bissection(low, high, 0, d_func_y)
         	table.insert(criticalPoints, crit_y)
         end
+
+		table.insert(criticalPoints, high) -- insert inflectionPoints
     end
 
-    -- sort critival points 
+    -- sort critical points 
     table.sort(criticalPoints)
 
     return removeRepeatedValuesInSortedList(criticalPoints)
@@ -258,6 +235,15 @@ end
 
 function evalLine(point, line)
 	return line[1]*point[1] + line[2]*point[2] + line[3]
+end
+
+function intersectionBetweenLines(line1, line2)
+	local a1, b1, c1 = line1[1], line1[2], line1[3]
+	local a2, b2, c2 = line2[1], line2[2], line2[3]
+	local D = 1/(a2*b1 - a1*b2)
+	local y = -(a2*c1-a1*c2)*D
+	local x = (b2*c1 - b1*c2)*D
+	return {x, y, 1}
 end
 
 function createImplicitLine(initialPoint, endPoint)
@@ -308,6 +294,48 @@ function pointsAreColinear(points)
 	return true
 end
 
+function pointsAreQuadratic(points)
+	local cubicTerm = {}
+	for i=1,2 do
+		cubicTerm[i] = -points[1][i] + 3*points[2][i]
+						-3*points[3][i] + points[4][i]
+	end
+	if arePointsEqual(cubicTerm, {0,0}) then return true end
+	return false
+end
+
+function arePointsEqual(p1, p2)
+	if #p1 ~= #p2 then return false end
+	for i=1,#p1 do
+		if math.abs(p1[i] - p2[i]) > 0.001 then return false end
+	end
+	return true
+end
+
+function getFirstTangent(points)
+	if not arePointsEqual(points[1], points[2]) then
+		return createImplicitPositiveLine(points[1], points[2])
+	elseif not arePointsEqual(points[1], points[3]) then
+		return createImplicitPositiveLine(points[1], points[3])
+	elseif not arePointsEqual(points[1], points[4]) then
+		return createImplicitPositiveLine(points[1], points[4])
+	else
+		print("degeneration")
+	end
+end
+
+function getLastTangent(points)
+	if not arePointsEqual(points[4], points[3]) then
+		return createImplicitPositiveLine(points[4], points[3])
+	elseif not arePointsEqual(points[4], points[2]) then
+		return createImplicitPositiveLine(points[4], points[2])
+	elseif not arePointsEqual(points[1], points[4]) then
+		return createImplicitPositiveLine(points[1], points[4])
+	else
+		print("degeneration")
+	end
+end
+
 function createBoundingBox(initialPoint, endPoint)
 	local boundingBox = {}
 
@@ -337,11 +365,20 @@ function updateBoundingBox(boundingBox, shapeBoundingBox)
 	return newBoundingBox
 end
 
-function testInsideShapeBoundingBox(shapeBoundingBox, x, y)
+function testIndideBoundingBox(shapeBoundingBox, x, y)
 	return (x < shapeBoundingBox["Xmax"]
 		and x > shapeBoundingBox["Xmin"]
 		and y < shapeBoundingBox["Ymax"]
 		and y > shapeBoundingBox["Ymin"])
+end
+
+function paintBoundingBoxes(segments, x, y)
+	for key,segment in pairs(segments) do
+		if testIndideBoundingBox(segment["boundingBox"], x, y) then
+			return 1
+		end
+	end
+	return 0
 end
 
 function printBoundingBox(boundingBox)
@@ -384,6 +421,143 @@ function countIntersections(segments, x, y)
 	return intersections
 end
 
+function cubicImplicitForm(points, x, y)
+	local intersections = 0
+
+	local x1 = points[2][1] - points[1][1]
+	local y1 = points[2][2] - points[1][2]
+	local x2 = points[3][1] - points[1][1]
+	local y2 = points[3][2] - points[1][2]
+	local x3 = points[4][1] - points[1][1]
+	local y3 = points[4][2] - points[1][2]
+
+	local xp = x - points[1][1]
+	local yp = y - points[1][2]
+
+	local signTest = -(y1 - y2 - y3)*(-x3*x3*(4*y1*y1 - 2*y1*y2 + y2*y2) + 
+					x1*x1*(9*y2*y2 - 6*y2*y3 - 4*y3*y3) + 
+					x2*x2*(9*y1*y1 - 12*y1*y3 - y3*y3) + 
+					2*x1*x3*(-y2*(6*y2 + y3) + y1*(3*y2 + 4*y3)) - 
+					2*x2*(x3*(3*y1*y1 - y2*y3 + y1*(-6*y2 + y3)) + 
+				    x1*(y1*(9*y2 - 3*y3) - y3*(6*y2 + y3))))
+
+	local resultant = -(-9*x2*y1 + 3*x3*y1 + 9*x1*y2 - 3*x1*y3)*((-3*x1*yp + 3*xp*y1)*(-9*x2*y1 + 3*x3*y1 + 9*x1*y2 - 3*x1*y3)
+					- ((6*x1 - 3*x2)*yp + xp*(-6*y1 + 3*y2))*((-3*x1 + 3*x2 - x3)*yp
+					+ xp*(3*y1 - 3*y2 + y3))) + (9*x2*y1 - 6*x3*y1 - 9*x1*y2 + 3*x3*y2 + 6*x1*y3 - 3*x2*y3)*(-((6*x1 - 3*x2)*yp
+					+ xp*(-6*y1 + 3*y2))*((6*x1 - 3*x2)*yp + xp*(-6*y1 + 3*y2)) + (-3*x1*yp + 3*xp*y1)*((-3*x1 + 3*x2 - x3)*yp
+					+ 9*x2*y1 - 9*x1*y2 + xp*(3*y1 - 3*y2 + y3))) + ((-3*x1 + 3*x2 - x3)*yp
+					+ xp*(3*y1 - 3*y2 + y3))*(((6*x1 - 3*x2)*yp + xp*(-6*y1 + 3*y2))*(-9*x2*y1 + 3*x3*y1 + 9*x1*y2 - 3*x1*y3)
+					- ((-3*x1 + 3*x2 - x3)*yp + xp*(3*y1 - 3*y2 + y3))*((-3*x1 + 3*x2 - x3)*yp
+					+ 9*x2*y1 - 9*x1*y2 + xp*(3*y1 - 3*y2 + y3)))
+
+				--[[    local a = -27*x1*x1*x1 + 81*x1*x1*x2 - 81*x1*x2*x2 + 27*x2*x2*x2 - 27*x1*x1*x3 + 
+				    54*x1*x2*x3 - 27*x2*x2*x3 - 9*x1*x3*x3 + 9*x2*x3*x3 -x3*x3*x3
+				    
+				    local b=27*y1*y1*y1 - 81*y1*y1*y2 + 81*y1*y2*y2 - 27*y2*y2*y2 + 27*y1*y1*y3 - 
+				    54*y1*y2*y3 + 27*y2*y2*y3 + 9*y1*y3*y3 - 9*y2*y3*y3 +y3*y3*y3
+				    
+				    local c=-81*x1*y1*y1 + 81*x2*y1*y1 - 27*x3*y1*y1 + 162*x1*y1*y2 - 162*x2*y1*y2 + 
+				    54*x3*y1*y2 - 81*x1*y2*y2 + 81*x2*y2*y2 - 27*x3*y2*y2 - 54*x1*y1*y3 + 
+				    54*x2*y1*y3 - 18*x3*y1*y3 + 54*x1*y2*y3 - 54*x2*y2*y3 + 
+				    18*x3*y2*y3 - 9*x1*y3*y3 + 9*x2*y3*y3 - 3*x3*y3*y3
+				    
+				    local d=81*x1*x1*y1 - 162*x1*x2*y1 + 81*x2*x2*y1 + 54*x1*x3*y1 - 54*x2*x3*y1 + 
+				    9*x3*x3*y1 - 81*x1*x1*y2 + 162*x1*x2*y2 - 81*x2*x2*y2 - 54*x1*x3*y2 + 
+				    54*x2*x3*y2 - 9*x3*x3*y2 + 27*x1*x1*y3 - 54*x1*x2*y3 + 27*x2*x2*y3 + 
+				    18*x1*x3*y3 - 18*x2*x3*y3 + 3*x3*x3*y3
+				    
+				    local e=81*x1*x2*x2*y1 - 54*x1*x1*x3*y1 - 81*x1*x2*x3*y1 + 54*x1*x3*x3*y1 - 
+				    9*x2*x3*x3*y1 - 81*x1*x1*x2*y2 + 162*x1*x1*x3*y2 - 81*x1*x2*x3*y2 + 
+				    27*x2*x2*x3*y2 - 18*x1*x3*x3*y2 + 54*x1*x1*x1*y3 - 81*x1*x1*x2*y3 + 
+				    81*x1*x2*x2*y3 - 27*x2*x2*x2*y3 - 54*x1*x1*x3*y3 + 27*x1*x2*x3*y3
+				    
+				    local f=-54*x3*y1*y1*y1 + 81*x2*y1*y1*y2 + 81*x3*y1*y1*y2 - 81*x1*y1*y2*y2 - 
+				    81*x3*y1*y2*y2 + 27*x3*y2*y2*y2 + 54*x1*y1*y1*y3 - 162*x2*y1*y1*y3 + 
+				    54*x3*y1*y1*y3 + 81*x1*y1*y2*y3 + 81*x2*y1*y2*y3 - 27*x3*y1*y2*y3 - 
+				    27*x2*y2*y2*y3 - 54*x1*y1*y3*y3 + 18*x2*y1*y3*y3 + 9*x1*y2*y3*y3
+				    
+				    local g=-81*x2*x2*y1*y1 + 108*x1*x3*y1*y1 + 81*x2*x3*y1*y1 - 54*x3*x3*y1*y1 - 
+				    243*x1*x3*y1*y2 + 81*x2*x3*y1*y2 + 27*x3*x3*y1*y2 + 81*x1*x1*y2*y2 + 
+				    81*x1*x3*y2*y2 - 54*x2*x3*y2*y2 - 108*x1*x1*y1*y3 + 243*x1*x2*y1*y3 - 
+				    81*x2*x2*y1*y3 - 9*x2*x3*y1*y3 - 81*x1*x1*y2*y3 - 81*x1*x2*y2*y3 + 
+				    54*x2*x2*y2*y3 + 9*x1*x3*y2*y3 + 54*x1*x1*y3*y3 - 27*x1*x2*y3*y3
+				    
+				    local h=-27*x1*x3*x3*y1*y1 + 81*x1*x2*x3*y1*y2 - 81*x1*x1*x3*y2*y2 - 
+				    81*x1*x2*x2*y1*y3 + 54*x1*x1*x3*y1*y3 + 81*x1*x1*x2*y2*y3 - 27*x1*x1*x1*y3*y3
+				    local i=27*x3*x3*y1*y1*y1 - 81*x2*x3*y1*y1*y2 + 81*x1*x3*y1*y2*y2 + 
+				    81*x2*x2*y1*y1*y3 - 54*x1*x3*y1*y1*y3 - 81*x1*x2*y1*y2*y3 + 
+				    27*x1*x1*y1*y3*y3
+
+				    local resultant = a*math.pow(yp,3)+b*math.pow(xp,3)+c*xp*xp*y+d*xp*yp*yp+e*yp*yp+f*xp*xp+g*xp*yp+h*yp+i*xp
+				--]]
+	local orientation = 1
+	if y3 < 0 then orientation = -1 end
+
+	if (resultant > 0 and signTest < 0) or (resultant < 0 and signTest > 0) then
+		return orientation
+	end
+	return 0
+end
+
+function countCubic(segments, x, y)
+	local intersections = 0
+	local pixel = {x, y, 1}
+	
+	for key, segment in pairs(segments) do
+		local resultant = segment["resultant"]
+		local delta = segment["delta"]
+		local boundingBox = segment["boundingBox"]
+		local vertex = segment["vertex"]
+		local positionVertex = segment["positionVertex"]
+		local controlPoints = segment["controlPoints"]
+
+		local p0 = controlPoints[1]
+		local p1 = RP2ToR2(vertex)
+		local p2 = controlPoints[4]
+
+	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+	    	if (x < boundingBox["Xmin"]) then
+	    		intersections = intersections + delta
+	    	else
+	    		local triangleTest = triangleTest(p0,p1,p2, pixel)
+	    		if positionVertex[1] == -1 then -- left positionVertex
+	    			if triangleTest == 1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+	    		elseif positionVertex[1] == 1 then -- right positionVertex
+	    			if triangleTest == -1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+		    	end
+	    	end
+	    end
+	end
+	return intersections
+end
+
+function getQuadraticSegment(newPoints)
+	local resultant = function(s, t)
+		return quadraticImplicitForm(newPoints, s, t)
+	end
+
+	local initialPoint = newPoints[1]
+	local endPoint = newPoints[#newPoints]
+
+	local boundingBox = createBoundingBox(initialPoint,endPoint)
+
+    local diagonalLine = createImplicitPositiveLine(newPoints[1], newPoints[3])
+    local positionVertex = checkPosition(RP2ToR2(newPoints[2]), diagonalLine)
+    local delta = getOrientation(initialPoint, endPoint)
+
+    local quadraticSegment = {}
+    quadraticSegment["boundingBox"] = boundingBox
+    quadraticSegment["controlPoints"] = newPoints
+    quadraticSegment["resultant"] = resultant
+    quadraticSegment["positionVertex"] = positionVertex
+    quadraticSegment["delta"] = delta
+    return quadraticSegment
+end
+
 function quadraticImplicitForm3(points, x, y)
 	-- Translate P0 to origin	
 	local intersections = 0
@@ -417,7 +591,6 @@ function quadraticImplicitForm3(points, x, y)
 	end
 	return 0
 end
-
 
 function quadraticImplicitForm(points, x, y)
 	-- Translate P0 to origin	
@@ -460,7 +633,6 @@ function quadraticImplicitForm(points, x, y)
 		return orientation
 	end
 	return 0
-
 end
 
 function quadraticImplicitForm1(points, x, y)
@@ -496,7 +668,6 @@ function quadraticImplicitForm1(points, x, y)
 		return orientation
 	end
 	return 0
-
 end
 
 function countQuadratic(segments, x, y)
@@ -507,10 +678,7 @@ function countQuadratic(segments, x, y)
 		local resultant = segment["resultant"]
 		local delta = segment["delta"]
 		local boundingBox = segment["boundingBox"]
-		local p0p1 = segment["p0p1"]
-		local p1p2 = segment["p1p2"]
-		local p0p2 = segment["p0p2"]
-		local positionP1 = segment["positionP1"]
+		local positionVertex = segment["positionVertex"]
 		local controlPoints = segment["controlPoints"]
 
 		local p0 = controlPoints[1]
@@ -522,11 +690,11 @@ function countQuadratic(segments, x, y)
 	    		intersections = intersections + delta
 	    	else
 	    		local triangleTest = triangleTest(p0,p1,p2, pixel)
-	    		if positionP1[1] == -1 then -- left positionP1
+	    		if positionVertex[1] == -1 then -- left positionVertex
 	    			if triangleTest == 1 then intersections = intersections + delta
 	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
 	    			end
-	    		elseif positionP1[1] == 1 then -- right positionP1
+	    		elseif positionVertex[1] == 1 then -- right positionVertex
 	    			if triangleTest == -1 then intersections = intersections + delta
 	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
 	    			end
@@ -536,44 +704,6 @@ function countQuadratic(segments, x, y)
 
 	end
 	return intersections
-end
-
-function foo2()
-	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
-	    	if (x < boundingBox["Xmin"]) then
-	    		intersections = intersections + delta
-	    	else
-	    		if positionP1[1] == -1 then -- left positionP1
-	    			if positionP1[2] == -1 then -- down positionP1
-						if isBelowLine(pixel, p0p1) or isBelowLine(pixel, p1p2) then
-		    				intersections = intersections + delta
-		    			elseif isBelowLine(pixel, p0p2) then
-		    				intersections = intersections + resultant(x,y)
-		    			end
-	    			elseif positionP1[2] == 1 then -- up positionP1
-	    				if isAboveLine(pixel, p0p1) or isAboveLine(pixel, p1p2) then
-		    				intersections = intersections + delta
-		    			elseif isAboveLine(pixel, p0p2) then
-		    				intersections = intersections + resultant(x,y)
-		    			end
-		    		end
-	    		elseif positionP1[1] == 1 then -- right positionP1
-	    			if positionP1[2] == -1 then -- down positionP1
-						if isAboveLine(pixel, p0p2) then
-		    				intersections = intersections + delta
-		    			elseif isAboveLine(pixel, p0p1) or isAboveLine(pixel, p1p2) then
-		    				intersections = intersections + resultant(x,y)
-		    			end
-	    			elseif positionP1[2] == 1 then -- up positionP1
-						if isBelowLine(pixel, p0p2) then
-		    				intersections = intersections + delta
-		    			elseif isBelowLine(pixel, p0p1) or isBelowLine(pixel, p1p2) then
-		    				intersections = intersections + resultant(x,y)
-		    			end
-		    		end
-		    	end
-	    	end
-	    end
 end
 
 function triangleTest(p0,p1,p2,p)
@@ -648,7 +778,6 @@ end
 function RP2ToR2(point)
 	return {point[1]/point[3], point[2], point[3], 1}
 end
-
 
 function countIntersectionsPath(segments, x, y)
 	local intersections = 0
@@ -859,7 +988,6 @@ function getRadialGradient(paint, px, py, cx)
 
     --local color = getRamp(ramp, gradientValueNormalized)
     return gradientValueNormalized
-
 end
 
 function getSpread(spreadType, value)
@@ -953,18 +1081,18 @@ local function sample(accelerated, x, y)
 
          	local shapeBoundingBox = shapeAccelerated["shapeBoundingBox"]
 
-         	if testInsideShapeBoundingBox(shapeBoundingBox, x, y) then
+         	if testIndideBoundingBox(shapeBoundingBox, x, y) then
 	        	local linearSegmentsIntersections = countIntersections(linearSegments, x, y)
 	        	local quadraticSegmentsIntersections = countQuadratic(quadraticSegments, x, y)
 	        	local rationalSegmentsIntersections = countQuadratic(rationalSegments, x, y)
+	        	local cubicSegmentsIntersections = countCubic(cubicSegments, x, y)
 
 	        	intersections = linearSegmentsIntersections
 	        					+ quadraticSegmentsIntersections
 	        					+ rationalSegmentsIntersections
-	        					--+ countIntersectionsPath(quadraticSegments, x, y)
-	        					+ countIntersectionsPath(cubicSegments, x, y)
-	        					--+ countIntersectionsPath(rationalSegments, x, y)
+	        					+ cubicSegmentsIntersections
 
+	        	--intersections = paintBoundingBoxes(linearSegments,x,y)+paintBoundingBoxes(quadraticSegments,x,y)+paintBoundingBoxes(rationalSegments,x,y)+paintBoundingBoxes(cubicSegments,x,y)
 
 	            local intersectionsBool = (intersections ~= 0)
 	            if rule == winding_rule.odd then
@@ -1132,12 +1260,19 @@ function _M.accelerate(scene, window, viewport, args)
         	local rationalSegments = {}
 
         	local shapeBoundingBox = {}
+        	local doubleAndInflectionParameters = {}
 
-	        pdata:iterate(filter.make_input_path_f_xform(xf, {
+	        pdata:iterate(filter.make_input_path_f_xform(xf, filter.make_input_path_f_find_cubic_parameters({
 	            begin_contour = function(self, x0, y0)
 	                print("", "begin_contour", x0, y0)
 	                beginContour = {x0,y0}
 	            end,
+				inflection_parameter = function(self, t)
+					table.insert(doubleAndInflectionParameters, t)
+				end,
+	            double_point_parameter = function(self, t)
+	            	table.insert(doubleAndInflectionParameters, t)
+				end,
 	            end_open_contour = function(self, x0, y0)
 	                print("", "end_open_contour", x0, y0)
 	                endOpenContour = {x0,y0}
@@ -1181,42 +1316,11 @@ function _M.accelerate(scene, window, viewport, args)
 	                	local newPoints = reparametrization(criticalPoints[i-1], criticalPoints[i], points)
 
 	                	if not pointsAreColinear(newPoints) then
-
-		                	print("transformed", "quadratic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
-
-		                	local resultant = function(s, t)
-		                		return quadraticImplicitForm(newPoints, s, t)
-		                	end
-
-		                	local initialPoint = newPoints[1]
-		                	local endPoint = newPoints[#newPoints]
-
-							local boundingBox = createBoundingBox(initialPoint,endPoint)
-							shapeBoundingBox = updateBoundingBox(boundingBox, shapeBoundingBox)
-			                
-			                local implicitP0P1 = createImplicitPositiveLine(newPoints[1], newPoints[2])
-			                local implicitP1P2 = createImplicitPositiveLine(newPoints[2], newPoints[3])
-			                local implicitP0P2 = createImplicitPositiveLine(newPoints[1], newPoints[3])
-			                
-			                local positionP1 = checkPosition(newPoints[2], implicitP0P2)
-
-			                print("triangleArea", triangleArea(newPoints[1], newPoints[2], newPoints[3]))
-			                print("evalLine", evalLine(newPoints[2], implicitP0P2))
-			                
-			                local delta = getOrientation(initialPoint, endPoint)
-
-			                local quadraticSegment = {}
-
-			                quadraticSegment["boundingBox"] = boundingBox
-			                quadraticSegment["controlPoints"] = newPoints
-			                quadraticSegment["resultant"] = resultant
-			                quadraticSegment["p0p1"] = implicitP0P1
-			                quadraticSegment["p1p2"] = implicitP1P2
-			                quadraticSegment["p0p2"] = implicitP0P2
-			                quadraticSegment["positionP1"] = positionP1
-			                quadraticSegment["delta"] = delta
+                			print("transformed", "quadratic_segment", newPoints[1][1], newPoints[1][2],
+                					newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
+		                	local quadraticSegment = getQuadraticSegment(newPoints)
+	                		shapeBoundingBox = updateBoundingBox(quadraticSegment["boundingBox"], shapeBoundingBox)
 			                quadraticSegments[#quadraticSegments + 1] = quadraticSegment
-
 							print("countQuadratic", countQuadratic(quadraticSegments, 82, 20), "size", #quadraticSegments)		                	
 		            	else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
@@ -1225,61 +1329,105 @@ function _M.accelerate(scene, window, viewport, args)
 			                linearSegments[#linearSegments + 1] = linearSegment
    		                end
 		            end
-
 	            end,
 	            cubic_segment = function(self, x0, y0, x1, y1, x2, y2, x3, y3)
-	                print("", "cubic_segment", x0, y0, x1, y1, x2, y2, x3, y3)
+	                print("original", "cubic_segment", x0, y0, x1, y1, x2, y2, x3, y3)
 
-	                local points = {{x0,y0}, {x1,y1}, {x2,y2}, {x3,y3}}
+	                local points = {{x0,y0,1}, {x1,y1,1}, {x2,y2,1}, {x3,y3,1}}
 
-				    -- find second derivatives
-				    local d2_func_x = function(t)
-				    	return bezierSecondDerivative(t, points)[1]
-				    end
+	                -- find second derivatives
+	                local d2_func_x = function(t)
+	                	return bezierSecondDerivative(t, points)[1]
+	                end
+	                local d2_func_y = function(t)
+	                	return bezierSecondDerivative(t, points)[2]
+	                end
 
-				    local d2_func_y = function(t)
-				    	return bezierSecondDerivative(t, points)[2]
-				    end
-
-	                local inflexionPoints = getInflexionPoints(d2_func_x, d2_func_y)
+	                local secondExtremePoints = getMonotonicIntervals(d2_func_x, d2_func_y)
+	                print("secondExtremePoints", table.unpack(secondExtremePoints))
 
                     -- bissect intervals
 				    local d_func_x = function(t)
 				    	return bezierDerivative(t, points)[1]
 				    end
-
 				    local d_func_y = function(t)
 				    	return bezierDerivative(t, points)[2]
 				    end
 
-	                local criticalPoints = getCriticalPoints(d_func_x, d_func_y, inflexionPoints)
+	                local criticalPoints = getCriticalPoints(d_func_x, d_func_y, secondExtremePoints)
+
+	                for key, value in pairs(doubleAndInflectionParameters) do
+	                	table.insert(criticalPoints, value)
+	                end
+
+	                table.sort(criticalPoints)
+	                criticalPoints = removeRepeatedValuesInSortedList(criticalPoints)
+
+	                print("criticalPoints", table.unpack(criticalPoints))
 
 	                for i=2,#criticalPoints do -- create quadratic segments
 	                	local newPoints = reparametrization(criticalPoints[i-1], criticalPoints[i], points)
 
-	                	local initialPoint = newPoints[1]
-	                	local endPoint = newPoints[#newPoints]
+	                	if pointsAreColinear(newPoints) then
+			                local linearSegment = createLinearSegment(newPoints[1], newPoints[4])
+			                print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[4][1], newPoints[4][2])
+			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
+			                linearSegments[#linearSegments + 1] = linearSegment
+			            elseif pointsAreQuadratic(newPoints) then
+			            	local Q = {-0.5*newPoints[1][1] + 1.5*newPoints[2][1], -0.5*newPoints[1][2] + 1.5*newPoints[2][2], 1} -- control point of degeneration
+			            	local equivalentPoints = {newPoints[1], Q, newPoints[4]}
+			            	print("transformed", "quadratic_segment", equivalentPoints[1][1], equivalentPoints[1][2],
+			            											equivalentPoints[2][1], equivalentPoints[2][2],
+			            											equivalentPoints[3][1], equivalentPoints[3][2])
+			            	local quadraticSegment = getQuadraticSegment(equivalentPoints)
+	                		shapeBoundingBox = updateBoundingBox(quadraticSegment["boundingBox"], shapeBoundingBox)
+			                quadraticSegments[#quadraticSegments + 1] = quadraticSegment
+	                	elseif not (arePointsEqual(newPoints[1], newPoints[2]) and
+	                				arePointsEqual(newPoints[2], newPoints[3]) and
+	                				arePointsEqual(newPoints[3], newPoints[4])) then
+		                	print("transformed", "cubic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2],
+		                											newPoints[3][1], newPoints[3][2], newPoints[4][1], newPoints[4][2])
 
-						local boundingBox = createBoundingBox(initialPoint,endPoint)
-		                
-		                local delta = getOrientation(initialPoint,endPoint)
+		                	local initialPoint = newPoints[1]
+		                	local endPoint = newPoints[#newPoints]
+		                	
+		                	local resultant = function(s, t)
+		                		return cubicImplicitForm(newPoints, s, t)
+		                	end
+								
+							local boundingBox = createBoundingBox(initialPoint,endPoint)
+							shapeBoundingBox = updateBoundingBox(boundingBox, shapeBoundingBox)
 
-		                local func_x = function(t)
-		                	return bezier(t, newPoints)[1]
-		                end
+			                local firstTangent = getFirstTangent(newPoints)
+			                local lastTangent = getLastTangent(newPoints)
 
-		                local func_y = function(t)
-		                	return bezier(t, newPoints)[2]
-		                end
-		                
-		                local cubicSegment = {}
+				            local diagonalLine = createImplicitPositiveLine(newPoints[1], newPoints[4])
+			                local vertex = intersectionBetweenLines(firstTangent, lastTangent)
+			                local positionVertex = checkPosition(vertex, diagonalLine)
 
-		                cubicSegment["boundingBox"] = boundingBox
-		                cubicSegment["func_x"] = func_x
-		                cubicSegment["func_y"] = func_y
-		                cubicSegment["delta"] = delta
-		                cubicSegments[#cubicSegments + 1] = cubicSegment		                	
+			                print("vertex", table.unpack(vertex))
+			                print("positionVertex", table.unpack(positionVertex))
+
+			                --print("resultant", resultant(100,40))
+
+			                --print("checking countCubic", countCubic(cubicSegments, 100,40), ": considering" , #cubicSegments, "segments")
+
+			                local delta = getOrientation(initialPoint,endPoint)
+			                
+			                local cubicSegment = {}
+
+			                cubicSegment["boundingBox"] = boundingBox
+			                cubicSegment["controlPoints"] = newPoints
+			                cubicSegment["resultant"] = resultant
+			                cubicSegment["vertex"] = vertex
+			                cubicSegment["positionVertex"] = positionVertex
+			                cubicSegment["delta"] = delta
+			                cubicSegments[#cubicSegments + 1] = cubicSegment
+		                else
+		                	print("degeneration found")
+		                end        	
 	                end
+	                doubleAndInflectionParameters = {}
 	            end,
 	            rational_quadratic_segment = function(self, x0, y0, x1, y1, w1,
 	                x2, y2)
@@ -1326,59 +1474,30 @@ function _M.accelerate(scene, window, viewport, args)
 
 	            	local criticalPoints = getCriticalPoints(d_func_x_w, d_func_y_w, {0,1})
 
-
 	                for i=2,#criticalPoints do -- create rational segments
 	                	local newPoints = reparametrization(criticalPoints[i-1], criticalPoints[i], points)
 
 	                	if not pointsAreColinear(newPoints) then
-
+	                		-- normalize control points
 		                	local w2 = newPoints[3][3]
 		                	local w0 = newPoints[1][3]
-		                	--print("w0, w2", w0, w2)
 
 		                	local lambda = math.sqrt(w2/w0)
-
 		                	for i=1,#newPoints do
 		                		for j=1,#newPoints[1] do
 		                			newPoints[i][j] = newPoints[i][j] * math.pow(lambda,3-i)/w2
 		                		end
 		                	end
 
-		                	print("", "rational_segments", newPoints[1][1], newPoints[1][2],
+		                	print("transformed", "rational_segments", newPoints[1][1], newPoints[1][2],
 		                		newPoints[2][1], newPoints[2][2], newPoints[2][3], newPoints[3][1], newPoints[3][2])
 
+		                	local rationalSegment = getQuadraticSegment(newPoints)
 
-		                	--print(newPoints[1][3], newPoints[2][3], newPoints[3][3])
+			                print("vertex", table.unpack(RP2ToR2(newPoints[2])))
+			                print("positionVertex", table.unpack(rationalSegment["positionVertex"]))
 
-		                	local resultant = function(s, t)
-		                		return quadraticImplicitForm(newPoints, s, t)
-		                	end
-
-		                	local initialPoint = newPoints[1]
-		                	local endPoint = newPoints[#newPoints]
-
-							local boundingBox = createBoundingBox(initialPoint,endPoint)
-							shapeBoundingBox = updateBoundingBox(boundingBox, shapeBoundingBox)
-
-			                local implicitP0P1 = createImplicitPositiveLine(newPoints[1], newPoints[2])
-			                local implicitP1P2 = createImplicitPositiveLine(newPoints[2], newPoints[3])
-			                local implicitP0P2 = createImplicitPositiveLine(newPoints[1], newPoints[3])
-			                local positionP1 = checkPosition(RP2ToR2(newPoints[2]), implicitP0P2)
-			                
-			                local delta = getOrientation(initialPoint, endPoint)
-			                
-			                local rationalSegment = {}
-
-			                rationalSegment["boundingBox"] = boundingBox
-							rationalSegment["controlPoints"] = points
-			                rationalSegment["resultant"] = resultant
-			                rationalSegment["p0p1"] = implicitP0P1
-			                rationalSegment["p1p2"] = implicitP1P2
-			                rationalSegment["p0p2"] = implicitP0P2
-			                rationalSegment["positionP1"] = positionP1
-			                --rationalSegment["func_x"] = func_x
-			                --rationalSegment["func_y"] = func_y
-			                rationalSegment["delta"] = delta
+							shapeBoundingBox = updateBoundingBox(rationalSegment["boundingBox"], shapeBoundingBox)
 			                rationalSegments[#rationalSegments + 1] = rationalSegment
 						else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
@@ -1388,7 +1507,7 @@ function _M.accelerate(scene, window, viewport, args)
 			            end
 	                end
 	            end,
-	        }))
+	        })))
 	        myAccelerated[shape_index]["linearSegments"] = linearSegments
 	        myAccelerated[shape_index]["quadraticSegments"] = quadraticSegments
 	        myAccelerated[shape_index]["cubicSegments"] = cubicSegments
