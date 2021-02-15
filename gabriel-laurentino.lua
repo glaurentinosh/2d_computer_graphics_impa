@@ -313,11 +313,15 @@ function arePointsEqual(p1, p2)
 end
 
 function getFirstTangent(points)
+	print("in firstTangent")
 	if not arePointsEqual(points[1], points[2]) then
+		print("p0p1")
 		return createImplicitPositiveLine(points[1], points[2])
 	elseif not arePointsEqual(points[1], points[3]) then
+		print("p0p2")
 		return createImplicitPositiveLine(points[1], points[3])
 	elseif not arePointsEqual(points[1], points[4]) then
+		print("p0p3")
 		return createImplicitPositiveLine(points[1], points[4])
 	else
 		print("degeneration")
@@ -325,11 +329,15 @@ function getFirstTangent(points)
 end
 
 function getLastTangent(points)
+	print("in lastTangent")
 	if not arePointsEqual(points[4], points[3]) then
+		print("p3p2")
 		return createImplicitPositiveLine(points[4], points[3])
 	elseif not arePointsEqual(points[4], points[2]) then
+		print("p3p1")
 		return createImplicitPositiveLine(points[4], points[2])
 	elseif not arePointsEqual(points[1], points[4]) then
+		print("p3p0")
 		return createImplicitPositiveLine(points[1], points[4])
 	else
 		print("degeneration")
@@ -715,14 +723,14 @@ function triangleTest(p0,p1,p2,p)
 	--if p0p1p2 ~= pp1p2 + p0pp2 + p0p1p then print("somethings wrong") end
 
 	if isSameSign(p0p1p2, p0pp2) then
-		if isSameSign(p0p1p2, p0pp2) and isSameSign(p0p1p2, p0pp2) then
+		if isSameSign(p0p1p2, p0p1p) and isSameSign(p0p1p2, pp1p2) then
 			return 0 -- inside triangle
 		else return 1 end -- same side
 	else return -1 end -- opposite side
 end
 
 function isSameSign(m,n)
-	return (m > 0 and n > 0) or (m < 0 and n < 0)
+	return (m >= 0 and n >= 0) or (m <= 0 and n <= 0)
 end
 
 function triangleArea(p0,p1,p2)
@@ -776,7 +784,7 @@ function getOrientation(initialPoint, endPoint)
 end
 
 function RP2ToR2(point)
-	return {point[1]/point[3], point[2], point[3], 1}
+	return {point[1]/point[3], point[2]/point[3], 1}
 end
 
 function countIntersectionsPath(segments, x, y)
@@ -1247,6 +1255,8 @@ function _M.accelerate(scene, window, viewport, args)
 
             myAccelerated[shape_index]["shapeType"] = shapeType
 
+            print("teste triangleTEst avulso", triangleTest({2,0}, {0,0}, {1,1}, {0.5, 0.5}))
+
         	local pdata = shape:as_path_data()
         	--local xf = shape:get_xf():transformed(scene:get_xf())
 
@@ -1401,6 +1411,9 @@ function _M.accelerate(scene, window, viewport, args)
 			                local firstTangent = getFirstTangent(newPoints)
 			                local lastTangent = getLastTangent(newPoints)
 
+			                print("firstTangent", table.unpack(firstTangent))
+			                print("lastTangent", table.unpack(lastTangent))
+
 				            local diagonalLine = createImplicitPositiveLine(newPoints[1], newPoints[4])
 			                local vertex = intersectionBetweenLines(firstTangent, lastTangent)
 			                local positionVertex = checkPosition(vertex, diagonalLine)
@@ -1411,6 +1424,10 @@ function _M.accelerate(scene, window, viewport, args)
 			                --print("resultant", resultant(100,40))
 
 			                --print("checking countCubic", countCubic(cubicSegments, 100,40), ": considering" , #cubicSegments, "segments")
+			                print("resultant 205.5 50", resultant(205.5, 50))
+			                print("triangleArea pixel", triangleArea(newPoints[2], newPoints[4], {205.5, 50}))
+			                print("triangleArea norm", triangleArea(newPoints[2], newPoints[4], newPoints[1]))
+			                print("triangleTest", triangleTest(newPoints[1], newPoints[2], newPoints[4] , {205.5, 50}))
 
 			                local delta = getOrientation(initialPoint,endPoint)
 			                
