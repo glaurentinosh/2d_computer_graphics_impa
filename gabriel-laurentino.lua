@@ -811,7 +811,7 @@ function opacityAlphaBlending(color,opacity)
 	else
 		blendColor[4] = opacity
 	end
-	if blendColor[4] > 1 then print(blendColor[4]) end
+	if blendColor[4] > 1 then print(blendColor[4]) end -- shouldnt happen
 	return blendColor
 end
 
@@ -991,6 +991,31 @@ function getRadialGradient(paint, px, py, cx)
     return gradientValueNormalized
 end
 
+function getTextureInfo(paint)
+    local tex = paint:get_texture_data()
+    local img = tex:get_image()
+    local width, height = img:get_width(), img:get_height()
+    return scaling(width, height)
+end
+
+function getTexture(paint, x, y)
+    local tex = paint:get_texture_data()
+    local spread, img = tex:get_spread(), tex:get_image()
+    local width, height = img:get_width(), img:get_height()
+    local opacity = paint:get_opacity()
+
+	--local xRamp, yRamp = x/width, y/height
+
+    local xRamp = math.floor(width*getSpread(spread, x)) % width + 1
+    local yRamp = math.floor(height*getSpread(spread, y)) % height + 1
+
+
+    local c1, c2, c3, c4 = img:get_pixel(xRamp, yRamp)
+    local color = {c1, c2, c3, c4}
+
+	return opacityAlphaBlending(color,opacity)
+end
+
 function getSpread(spreadType, value)
 	if spreadType == spread.clamp then
 		return math.min(1, max(0,value))
@@ -999,7 +1024,7 @@ function getSpread(spreadType, value)
 	elseif spreadType == spread.mirror then
 		return 2*math.abs(0.5*value - math.floor(0.5*value + 0.5))
 	elseif spreadType == spread.transparent then
-		if value < 0 or value > 1 then return 5 end
+		if value < 0 or value > 1 then return -1 end
 		return value
 	else
 		print("Couldnt find spread method")
@@ -1053,6 +1078,9 @@ end
 -- SAMPLE
 -------------------
 
+-- Set Number of Samples for Anti-Aliasing, must be power of 2
+local blueSize = 1
+
 function mixColors(colorsToMix)
 	local R = 0
 	local G = 0
@@ -1099,8 +1127,6 @@ local function preSample(accelerated, x, y)
 	        					+ countQuadratic(rationalSegments, x, y)
 	        					+ countCubic(cubicSegments, x, y)
 
-	        	--intersections = paintBoundingBoxes(linearSegments,x,y)+paintBoundingBoxes(quadraticSegments,x,y)+paintBoundingBoxes(rationalSegments,x,y)+paintBoundingBoxes(cubicSegments,x,y)
-
 	            local intersectionsBool = (intersections ~= 0)
 	            if rule == winding_rule.odd then
 	                intersectionsBool = (intersections % 2 == 1)
@@ -1108,21 +1134,19 @@ local function preSample(accelerated, x, y)
 
 	            if (intersectionsBool) then -- non-zero
 	            	local opacity = paint:get_opacity()
-	            	local paint_xf = paint:get_xf():inverse() --shapeAccelerated["xf"]
+	            	--local paint_xf = paint:get_xf():inverse() --shapeAccelerated["xf"]
 	            	if paint:get_type() == paint_type.solid_color then
 		            	local blendColor = opacityAlphaBlending(paint:get_solid_color(),opacity)
 	                	table.insert(colors, blendColor)
-
 	                elseif paint:get_type() == paint_type.linear_gradient then
-	                	--print("paint transformation", paint:get_xf())
-	                	local px, py = paint_xf:transformed(scene:get_xf():inverse()):apply(x, y, 1)
+				        local simplerXf = shapeAccelerated["simplerXf"]
+				        local px, py = simplerXf:apply(x,y,1) -- transformed pixel coordinates
+	                	--local px, py = paint_xf:transformed(scene:get_xf():inverse()):apply(x, y, 1)
 						local t_ramp = getLinearGradient(paint, px, py)
 						local sampledColors = shapeAccelerated["sampledColors"]
 						local sampleIndex = math.max(math.floor(#sampledColors*t_ramp),1)
 						local colorFound = sampledColors[sampleIndex]
-						--if t_ramp == 0 then print("cor encontrada", colorFound, "", sampleIndex) end
 						table.insert(colors, colorFound)
-
 	                elseif paint:get_type() == paint_type.radial_gradient then
 				        local simplerXf = shapeAccelerated["simplerXf"]
 				        local px, py = simplerXf:apply(x,y,1) -- transformed pixel coordinates
@@ -1131,10 +1155,12 @@ local function preSample(accelerated, x, y)
 				        local sampledColors = shapeAccelerated["sampledColors"]
 						local sampleIndex = math.max(math.floor(#sampledColors*t_ramp),1)
 						local colorFound = sampledColors[sampleIndex]
-						--if t_ramp == 0 then print("cor encontrada", colorFound, "", sampleIndex) end
 						table.insert(colors, colorFound)
 	                elseif paint:get_type() == paint_type.texture then
-	                	--print("texture")
+				        local simplerXf = shapeAccelerated["simplerXf"]
+				        local px, py = simplerXf:apply(x,y,1) -- transformed pixel coordinates
+	                	local colorFound = getTexture(paint, px, py)
+	                	table.insert(colors, colorFound)
 	                else
 	                	print("unknown paint")
 	                end
@@ -1152,7 +1178,6 @@ local function preSample(accelerated, x, y)
 end
 
 local function sample(accelerated, x, y)
-	local blueSize = 16
 	local colorsToMix = {}
 	for i=1,blueSize do
 		local dx = blue[blueSize].x[i]
@@ -1244,31 +1269,27 @@ function _M.accelerate(scene, window, viewport, args)
 
             local shapeType = shape:get_type()
 
-            local xf = shape:get_xf():transformed(scene:get_xf())
-            xf = xf:transformed(transformationStack[#transformationStack])
+            local cur_xf = transformationStack[#transformationStack]
+            local sceneCurXf = scene:get_xf()*cur_xf
+            local shape_xf = sceneCurXf*shape:get_xf()
+            local paint_xf = sceneCurXf*paint:get_xf()
 
             print("transformation depth", #transformationStack)
         	
             if paint:get_type() == paint_type.linear_gradient then
             	local sampledColors = getLinearGradientInfo(paint)
+            	local simplerXf = paint_xf:inverse()
+            	myAccelerated[shape_index]["simplerXf"] = simplerXf
             	myAccelerated[shape_index]["sampledColors"] = sampledColors
             elseif paint:get_type() == paint_type.radial_gradient then
             	local radialGradient = getRadialGradientInfo(paint)
             	myAccelerated[shape_index]["sampledColors"] = radialGradient["sampledColors"]
-            	myAccelerated[shape_index]["simplerXf"] = radialGradient["simplerXf"]*paint:get_xf():inverse()*scene:get_xf():inverse()--*xf:inverse()
+            	myAccelerated[shape_index]["simplerXf"] = radialGradient["simplerXf"]*paint_xf:inverse()--*xf:inverse()
             	myAccelerated[shape_index]["newCx"] = radialGradient["newCx"]
             elseif paint:get_type() == paint_type.texture then
-    	        local tex = paint:get_texture_data()
-		        print("", tex:get_spread())
-		        local img = tex:get_image()
-		        print("", "image", img:get_width(), img:get_height(), img:get_num_channels())
---[[		        for i = 1, img:get_height() do
-		            for j = 1, img:get_width() do
-		                print("", "", j, i, img:get_pixel(j, i))
-		            end
-		        end--]]
-		        local opacity = paint:get_opacity()
-		        print("", opacity)
+            	local textureXf = getTextureInfo(paint)
+            	local simplerXf = paint_xf:inverse()
+            	myAccelerated[shape_index]["simplerXf"] = simplerXf
             end
 
             myAccelerated[shape_index]["shapeType"] = shapeType
@@ -1285,7 +1306,7 @@ function _M.accelerate(scene, window, viewport, args)
         	local shapeBoundingBox = {}
         	local doubleAndInflectionParameters = {}
 
-	        pdata:iterate(filter.make_input_path_f_xform(xf, filter.make_input_path_f_find_cubic_parameters({
+	        pdata:iterate(filter.make_input_path_f_xform(shape_xf, filter.make_input_path_f_find_cubic_parameters({
 	            begin_contour = function(self, x0, y0)
 	                print("", "begin_contour", x0, y0)
 	                beginContour = {x0,y0}
