@@ -17,9 +17,59 @@ local function stderr(...)
 end
 
 --------------------------------------
+-- Cell class
+---------------------------------------
+
+local Cell = {}
+Cell.__index = Cell
+
+function Cell:new(segments, parent, index)
+    local Cell = setmetatable({}, Cell)
+    --Cell.width = width     
+    Cell.segments = segments     
+    Cell.parent = parent   
+    Cell.index = index
+    return Cell
+end
+
+function Cell:set(segments)
+    self.segments = segments
+end
+
+function Cell:get()
+    return self.segments
+end
+
+--------------------------------------
+-- Segment class
+--------------------------------------
+
+local Segment = {}
+Segment.__index = Segment
+
+function Segment:new(segment, segType)
+	local Segment = setmetatable({}, Segment)
+	Segment.segment = segment
+	Segment.type = segType
+	return Segment
+end
+
+--------------------------------------
 -- VARIABLES AND FUNCTIONS
+-------------------------------------
 
 myAccelerated = {}
+
+
+function roundupPow2(num)
+	local iter = num
+	local result = 1
+	while iter > 0 do
+		iter = iter//2
+		result = result * 2
+	end
+	return result
+end
 
 function bezier(t, points) -- De Casteljou
 	local bezier_list = {}
@@ -398,28 +448,26 @@ function innerProduct(v1, v2)
     return result
 end
 
-function countIntersections(segments, x, y)
+function countLinear(segment, x, y)
 	local intersections = 0
 	local pixel = {x, y, 1}
-	for key, segment in pairs(segments) do
-		local boundingBox = segment["boundingBox"]
-		local implicit = segment["implicit"]
-		local delta = segment["delta"] -- tells me if I have to sum or subtract 1 from intersections
+	local boundingBox = segment["boundingBox"]
+	local implicit = segment["implicit"]
+	local delta = segment["delta"] -- tells me if I have to sum or subtract 1 from intersections
 
-	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
-	    	if (x < boundingBox["Xmin"]) then
-	    		intersections = intersections + delta
-	    	else
-	    		local value = evalLine(pixel, implicit)
-                if (implicit[1] > 0 and value < 0) then
-                    intersections = intersections + 1
-                elseif (implicit[1] < 0 and value > 0) then
-                    intersections = intersections - 1
-	    		end
-	    	end
-	    end
-	end
-	return intersections
+    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+    	if (x < boundingBox["Xmin"]) then
+    		intersections = intersections + delta
+    	else
+    		local value = evalLine(pixel, implicit)
+            if (implicit[1] > 0 and value < 0) then
+                intersections = intersections + 1
+            elseif (implicit[1] < 0 and value > 0) then
+                intersections = intersections - 1
+    		end
+    	end
+    end
+    return intersections
 end
 
 function cubicImplicitForm(points, x, y)
@@ -500,39 +548,38 @@ function cubicImplicitForm(points, x, y)
 	return 0
 end
 
-function countCubic(segments, x, y)
+function countCubic(segment, x, y)
 	local intersections = 0
 	local pixel = {x, y, 1}
 	
-	for key, segment in pairs(segments) do
-		local resultant = segment["resultant"]
-		local delta = segment["delta"]
-		local boundingBox = segment["boundingBox"]
-		local vertex = segment["vertex"]
-		local positionVertex = segment["positionVertex"]
-		local controlPoints = segment["controlPoints"]
+	local resultant = segment["resultant"]
+	local delta = segment["delta"]
+	local boundingBox = segment["boundingBox"]
+	local vertex = segment["vertex"]
+	local positionVertex = segment["positionVertex"]
+	local controlPoints = segment["controlPoints"]
 
-		local p0 = controlPoints[1]
-		local p1 = RP2ToR2(vertex)
-		local p2 = controlPoints[4]
+	local p0 = controlPoints[1]
+	local p1 = RP2ToR2(vertex)
+	local p2 = controlPoints[4]
 
-	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
-	    	if (x < boundingBox["Xmin"]) then
-	    		intersections = intersections + delta
-	    	else
-	    		local triangleTest = triangleTest(p0,p1,p2, pixel)
-	    		if positionVertex[1] == -1 then -- left positionVertex
-	    			if triangleTest == 1 then intersections = intersections + delta
-	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
-	    			end
-	    		elseif positionVertex[1] == 1 then -- right positionVertex
-	    			if triangleTest == -1 then intersections = intersections + delta
-	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
-	    			end
-		    	end
+    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+    	if (x < boundingBox["Xmin"]) then
+    		intersections = intersections + delta
+    	else
+    		local triangleTest = triangleTest(p0,p1,p2, pixel)
+    		if positionVertex[1] == -1 then -- left positionVertex
+    			if triangleTest == 1 then intersections = intersections + delta
+    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+    			end
+    		elseif positionVertex[1] == 1 then -- right positionVertex
+    			if triangleTest == -1 then intersections = intersections + delta
+    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+    			end
 	    	end
-	    end
-	end
+    	end
+    end
+
 	return intersections
 end
 
@@ -671,39 +718,37 @@ function quadraticImplicitForm1(points, x, y)
 	return 0
 end
 
-function countQuadratic(segments, x, y)
+function countQuadratic(segment, x, y)
 	local intersections = 0
 	local pixel = {x, y, 1}
 	
-	for key, segment in pairs(segments) do
-		local resultant = segment["resultant"]
-		local delta = segment["delta"]
-		local boundingBox = segment["boundingBox"]
-		local positionVertex = segment["positionVertex"]
-		local controlPoints = segment["controlPoints"]
+	local resultant = segment["resultant"]
+	local delta = segment["delta"]
+	local boundingBox = segment["boundingBox"]
+	local positionVertex = segment["positionVertex"]
+	local controlPoints = segment["controlPoints"]
 
-		local p0 = controlPoints[1]
-		local p1 = RP2ToR2(controlPoints[2])
-		local p2 = controlPoints[3]
+	local p0 = controlPoints[1]
+	local p1 = RP2ToR2(controlPoints[2])
+	local p2 = controlPoints[3]
 
-	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
-	    	if (x < boundingBox["Xmin"]) then
-	    		intersections = intersections + delta
-	    	else
-	    		local triangleTest = triangleTest(p0,p1,p2, pixel)
-	    		if positionVertex[1] == -1 then -- left positionVertex
-	    			if triangleTest == 1 then intersections = intersections + delta
-	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
-	    			end
-	    		elseif positionVertex[1] == 1 then -- right positionVertex
-	    			if triangleTest == -1 then intersections = intersections + delta
-	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
-	    			end
-		    	end
+    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+    	if (x < boundingBox["Xmin"]) then
+    		intersections = intersections + delta
+    	else
+    		local triangleTest = triangleTest(p0,p1,p2, pixel)
+    		if positionVertex[1] == -1 then -- left positionVertex
+    			if triangleTest == 1 then intersections = intersections + delta
+    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+    			end
+    		elseif positionVertex[1] == 1 then -- right positionVertex
+    			if triangleTest == -1 then intersections = intersections + delta
+    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+    			end
 	    	end
-	    end
+    	end
+    end
 
-	end
 	return intersections
 end
 
@@ -778,30 +823,6 @@ end
 
 function RP2ToR2(point)
 	return {point[1]/point[3], point[2]/point[3], 1}
-end
-
-function countIntersectionsPath(segments, x, y)
-	local intersections = 0
-	for key, segment in pairs(segments) do
-		local boundingBox = segment["boundingBox"]
-		local func_x = segment["func_x"]
-		local func_y = segment["func_y"]
-		local delta = segment["delta"] -- tells me if I have to sum or subtract 1 from intersections
-
-	    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
-	    	if (x < boundingBox["Xmin"]) then
-	    		intersections = intersections + delta
-	    	else
-	    		local t_intersection = bissection(0, 1, y, func_y)
-	    		local x_intersection = func_x(t_intersection)
-
-	    		if (x < x_intersection) then
-	    			intersections = intersections + delta
-	    		end
-	    	end
-	    end
-	end
-	return intersections
 end
 
 function opacityAlphaBlending(color,opacity)
@@ -1004,11 +1025,8 @@ function getTexture(paint, x, y)
     local width, height = img:get_width(), img:get_height()
     local opacity = paint:get_opacity()
 
-	--local xRamp, yRamp = x/width, y/height
-
     local xRamp = math.floor(width*getSpread(spread, x)) % width + 1
     local yRamp = math.floor(height*getSpread(spread, y)) % height + 1
-
 
     local c1, c2, c3, c4 = img:get_pixel(xRamp, yRamp)
     local color = {c1, c2, c3, c4}
@@ -1073,6 +1091,21 @@ function uniformSampling(ramp,opacity)
     return colors
 end
 
+function countIntersections(segments, x, y)
+	local intersections = 0
+	for key, segment in pairs(segments) do
+		if segment.type == "linear" then
+			intersections = intersections + countLinear(segment.segment, x, y)
+		elseif segment.type == "cubic" then
+			intersections = intersections + countCubic(segment.segment, x, y)
+		elseif segment.type == "quadratic" then
+			intersections = intersections + countQuadratic(segment.segment, x, y)
+		end
+	end
+	return intersections
+
+end
+
 
 -- ----------------
 -- SAMPLE
@@ -1111,22 +1144,14 @@ local function preSample(accelerated, x, y)
     scene:get_scene_data():iterate{
         painted_shape = function(self, rule, shape, paint)
             local shapeAccelerated = myAccelerated[shape_index]
-            local dealAs = shapeAccelerated["dealAs"]
             local intersections = 0
 
-        	local linearSegments = shapeAccelerated["linearSegments"]
-        	local quadraticSegments = shapeAccelerated["quadraticSegments"]
-        	local cubicSegments = shapeAccelerated["cubicSegments"]
-        	local rationalSegments = shapeAccelerated["rationalSegments"]
-
+        	local segments = shapeAccelerated["segments"]
          	local shapeBoundingBox = shapeAccelerated["shapeBoundingBox"]
 
          	if testIndideBoundingBox(shapeBoundingBox, x, y) then
-	        	intersections = countIntersections(linearSegments, x, y)
-	        					+ countQuadratic(quadraticSegments, x, y)
-	        					+ countQuadratic(rationalSegments, x, y)
-	        					+ countCubic(cubicSegments, x, y)
-
+	        	--intersections = countLinear(linearSegments, x, y) + countQuadratic(quadraticSegments, x, y) + countQuadratic(rationalSegments, x, y) + countCubic(cubicSegments, x, y)
+	        	intersections = countIntersections(segments, x, y)
 	            local intersectionsBool = (intersections ~= 0)
 	            if rule == winding_rule.odd then
 	                intersectionsBool = (intersections % 2 == 1)
@@ -1250,6 +1275,10 @@ function _M.accelerate(scene, window, viewport, args)
         stderr("  -%s:%s\n", tostring(i), tostring(v))
     end
 
+    print("wv", table.unpack(viewport))
+    print(roundupPow2(viewport[3]), roundupPow2(viewport[4]))
+    Cell:new()
+
     scene = scene:windowviewport(window, viewport)
     stderr("scene xf %s\n", scene:get_xf())
 
@@ -1298,10 +1327,11 @@ function _M.accelerate(scene, window, viewport, args)
 
         	local beginContour = {}
         	local endOpenContour = {}
-        	local linearSegments = {}
-        	local quadraticSegments = {}
-        	local cubicSegments = {}
-        	local rationalSegments = {}
+        	local segments = {}
+        	--local linearSegments = {}
+        	--local quadraticSegments = {}
+        	--local cubicSegments = {}
+        	--local rationalSegments = {}
 
         	local shapeBoundingBox = {}
         	local doubleAndInflectionParameters = {}
@@ -1323,7 +1353,8 @@ function _M.accelerate(scene, window, viewport, args)
 
 	                if beginContour ~= endOpenContour then
 	                	local linearSegment = createLinearSegment(endOpenContour, beginContour)
-		                linearSegments[#linearSegments + 1] = linearSegment
+		                --linearSegments[#linearSegments + 1] = linearSegment
+		                segments[#segments + 1] = Segment:new(linearSegment, "linear")
 	                end
 	            end,
 	            end_closed_contour = function(self, x0, y0)
@@ -1339,7 +1370,10 @@ function _M.accelerate(scene, window, viewport, args)
 
 	                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
 
-	                linearSegments[#linearSegments + 1] = linearSegment
+	                --linearSegments[#linearSegments + 1] = linearSegment
+	                local segment = Segment:new(linearSegment, "linear")
+	                print("class", segment, segment.segment, segment.type)
+	                segments[#segments + 1] = segment
 	            end,
 	            quadratic_segment = function(self, x0, y0, x1, y1, x2, y2)
 	                print("original", "quadratic_segment", x0, y0, x1, y1, x2, y2)
@@ -1363,12 +1397,14 @@ function _M.accelerate(scene, window, viewport, args)
                 					newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
 		                	local quadraticSegment = getQuadraticSegment(newPoints)
 	                		shapeBoundingBox = updateBoundingBox(quadraticSegment["boundingBox"], shapeBoundingBox)
-			                quadraticSegments[#quadraticSegments + 1] = quadraticSegment	                	
+			                --quadraticSegments[#quadraticSegments + 1] = quadraticSegment	 
+			                segments[#segments + 1] = Segment:new(quadraticSegment, "quadratic")               	
 		            	else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
 			                print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
-			                linearSegments[#linearSegments + 1] = linearSegment
+			                --linearSegments[#linearSegments + 1] = linearSegment
+			                segments[#segments + 1] = Segment:new(linearSegment, "linear")
    		                end
 		            end
 	            end,
@@ -1414,7 +1450,8 @@ function _M.accelerate(scene, window, viewport, args)
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[4])
 			                --print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[4][1], newPoints[4][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
-			                linearSegments[#linearSegments + 1] = linearSegment
+			                --linearSegments[#linearSegments + 1] = linearSegment
+			                segments[#segments + 1] = Segment:new(linearSegment, "linear")
 			            elseif pointsAreQuadratic(newPoints) then
 			            	local Q = {-0.5*newPoints[1][1] + 1.5*newPoints[2][1], -0.5*newPoints[1][2] + 1.5*newPoints[2][2], 1} -- control point of degeneration
 			            	local equivalentPoints = {newPoints[1], Q, newPoints[4]}
@@ -1423,7 +1460,8 @@ function _M.accelerate(scene, window, viewport, args)
 			            											equivalentPoints[3][1], equivalentPoints[3][2])
 			            	local quadraticSegment = getQuadraticSegment(equivalentPoints)
 	                		shapeBoundingBox = updateBoundingBox(quadraticSegment["boundingBox"], shapeBoundingBox)
-			                quadraticSegments[#quadraticSegments + 1] = quadraticSegment
+			                --quadraticSegments[#quadraticSegments + 1] = quadraticSegment
+			                segments[#segments + 1] = Segment:new(quadraticSegment, "quadratic")
 	                	elseif not (arePointsEqual(newPoints[1], newPoints[2]) and
 	                				arePointsEqual(newPoints[2], newPoints[3]) and
 	                				arePointsEqual(newPoints[3], newPoints[4])) then
@@ -1457,7 +1495,8 @@ function _M.accelerate(scene, window, viewport, args)
 			                cubicSegment["vertex"] = vertex
 			                cubicSegment["positionVertex"] = positionVertex
 			                cubicSegment["delta"] = delta
-			                cubicSegments[#cubicSegments + 1] = cubicSegment
+			                --cubicSegments[#cubicSegments + 1] = cubicSegment
+			                segments[#segments + 1] = Segment:new(cubicSegment, "cubic")
 		                else
 		                	print("degeneration found")
 		                end        	
@@ -1527,20 +1566,23 @@ function _M.accelerate(scene, window, viewport, args)
 		                	local rationalSegment = getQuadraticSegment(newPoints)
 
 							shapeBoundingBox = updateBoundingBox(rationalSegment["boundingBox"], shapeBoundingBox)
-			                rationalSegments[#rationalSegments + 1] = rationalSegment
+			                --rationalSegments[#rationalSegments + 1] = rationalSegment
+			                segments[#segments + 1] = Segment:new(rationalSegment, "quadratic")
 						else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
 			                --print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
-			                linearSegments[#linearSegments + 1] = linearSegment
+			                --linearSegments[#linearSegments + 1] = linearSegment
+			                segments[#segments + 1] = Segment:new(linearSegment, "linear")
 			            end
 	                end
 	            end,
 	        })))
-	        myAccelerated[shape_index]["linearSegments"] = linearSegments
-	        myAccelerated[shape_index]["quadraticSegments"] = quadraticSegments
-	        myAccelerated[shape_index]["cubicSegments"] = cubicSegments
-	        myAccelerated[shape_index]["rationalSegments"] = rationalSegments
+	        --myAccelerated[shape_index]["linearSegments"] = linearSegments
+	        --myAccelerated[shape_index]["quadraticSegments"] = quadraticSegments
+	        --myAccelerated[shape_index]["cubicSegments"] = cubicSegments
+	        --myAccelerated[shape_index]["rationalSegments"] = rationalSegments
+	        myAccelerated[shape_index]["segments"] = segments
 	        myAccelerated[shape_index]["shapeBoundingBox"] = shapeBoundingBox
 
             shape_index = shape_index + 1
@@ -1555,7 +1597,7 @@ function _M.accelerate(scene, window, viewport, args)
 	        table.remove(transformationStack)
         end,
     }
-    -- It is up to you to do better!
+    local quadTree = Cell:new(segments, nil, nil)
     return scene
 end
 
