@@ -3,6 +3,7 @@ local image = require"image"
 local chronos = require"chronos"
 local filter = require"filter"
 local blue = require"blue"
+local svg = require"svg"
 
 local unpack = table.unpack
 local floor = math.floor
@@ -17,19 +18,66 @@ local function stderr(...)
 end
 
 --------------------------------------
--- Cell class
+-- debug svg
+-------------------------------------
+
+function debug()
+	local new_sd = svg.scene_data()
+
+	-- add a stroked line
+	local path = svg.path{
+	    svg.M, 0, 0,
+	    svg.L, 200, 200,
+	}
+
+	new_sd:painted_shape(svg.winding_rule.non_zero, path:stroked(2), svg.solid_color(svg.color.black))
+
+	-- add a quadratic
+	local path = svg.path{
+	    svg.M, 0, 0,
+	    svg.Q, 0, 200, 200, 200,
+	}
+	new_sd:painted_shape(svg.winding_rule.non_zero, path:stroked(2), svg.solid_color(svg.color.black))
+
+	local new_scene = svg.scene(new_sd)
+
+	-- open a file to write our svg
+	local output = io.open('dump.svg', "w")
+
+	local window = svg.window(0,0,200,200)
+	local viewport = svg.viewport(0,0,200,200)
+
+	-- save our svg scene
+	svg.render(new_scene, window, viewport, output)
+
+	-- close the file
+	output:close()
+end
+
+---------------------------------------
+---------------------------------------
+-- CELL CLASS
+---------------------------------------
 ---------------------------------------
 
-local Cell = {}
+Cell = {}
 Cell.__index = Cell
 
-function Cell:new(segments, parent, index)
-    local Cell = setmetatable({}, Cell)
-    --Cell.width = width     
-    Cell.segments = segments     
-    Cell.parent = parent   
-    Cell.index = index
-    return Cell
+function Cell:new(segments, k, limits, parent, children, index, numShapeSegments, depth)
+    local obj = {}
+    setmetatable(obj, Cell)
+    obj.segments = segments
+    obj.k = k
+    obj.limits = limits
+    obj.parent = parent
+    obj.children = children
+    obj.index = index
+    obj.depth = depth or parent.depth + 1
+    obj.numShapeSegments = numShapeSegments
+    obj.usefulShapes = {}
+    obj.shortcutIn = {}
+    obj.shortcutOut = {}
+    return obj
 end
 
 function Cell:set(segments)
@@ -40,6 +88,210 @@ function Cell:get()
     return self.segments
 end
 
+function Cell:size()
+	return math.min((self.limits[3] - self.limits[1]),(self.limits[4] - self.limits[2]))
+end
+
+function Cell:free()
+	self.k = nil
+	if self.parent ~= nil then self.segments = nil end
+	self.numShapeSegments = nil
+	self.usefulShapes = nil
+	self.shortcutIn = nil
+	self.shortcutOut = nil
+end
+
+function Cell:isPointInside(point)
+	--print(table.unpack(self.limits))
+	if point[1] >= self.limits[1] and point[1] < self.limits[3] then
+		if point[2] >= self.limits[2] and point[2] < self.limits[4] then
+			return true
+		end
+	end
+	return false
+end
+
+function Cell:isSegmentInside(segment)
+	local seg = segment.segment
+	local initialPoint = seg.initialPoint
+	local endPoint = seg.endPoint
+
+	local isP0Inside = self:isPointInside(initialPoint)
+	local isPfInside = self:isPointInside(endPoint)
+
+	if isP0Inside and isPfInside then
+		return true
+	end
+
+	local limits = self.limits
+
+	local p1 = {limits[1], limits[2]}
+	local p2 = {limits[3], limits[2]}
+	local p3 = {limits[3], limits[4]}
+	local p4 = {limits[1], limits[4]}
+
+	local crossp2p3 = segment:testCrossVerticalLine(p2, p3)
+
+	if crossp2p3 then
+		if endPoint[1] > initialPoint[1] and endPoint[2] < limits[4] then
+			--print("added shortcut!! OUT")
+			self:addShortcutOut(segment)
+		elseif endPoint[1] < initialPoint[1] and initialPoint[2] < limits[4] then
+			--print("added shortcut!! IN")
+			self:addShortcutIn(segment)
+		end
+		return true
+	end
+
+	local crossp1p2 = segment:testCrossHorizontalLine(p1, p2)
+	local crossp3p4 = segment:testCrossHorizontalLine(p3, p4)
+	local crossp1p4 = segment:testCrossVerticalLine(p1, p4)
+
+	if crossp1p2 or crossp3p4 or crossp1p4 then return true end
+	if isP0Inside or isPfInside then return true end
+
+	--print(table.unpack(initialPoint))
+	--print(table.unpack(endPoint))
+	--print(table.unpack(limits))
+	--print("segment not inside cell")
+
+	return false
+end
+
+function Cell:addShortcutIn(segment)
+	table.insert(self.shortcutIn, segment)
+	--self.shortcut[segment] = -1
+end
+
+function Cell:addShortcutOut(segment)
+	table.insert(self.shortcutOut, segment)
+	--self.shortcut[segment] = 1
+end
+
+function Cell:getShortcut(segment)
+	return self.shortcut[segment] or 0
+end
+
+function Cell:subdivide()
+	if #self.segments < 16 or self:size() < 8 or #self.usefulShapes < 4 or self.depth > 8 then return end
+	--print("SUBDIVIDE", self.depth, self.index)
+	--if self.depth > 5 then return end
+
+	local segments = self.segments
+	local limits = self.limits
+	local k = self.k
+	local numShapes = #self.numShapeSegments
+
+	-- middle point of cell
+	local middleX, middleY = (self.limits[1]+self.limits[3])//2, (self.limits[2]+self.limits[4])//2
+
+	-- new limits for new cells
+	local limits00 = {self.limits[1], self.limits[2], middleX, middleY}
+	local limits10 = {middleX, self.limits[2], self.limits[3], middleY}
+	local limits11 = {middleX, middleY, self.limits[3], self.limits[4]}
+	local limits01 = {self.limits[1], middleY, middleX, self.limits[4]}
+
+	local zeroes = {}
+	for i=1,numShapes do zeroes[i] = 0 end
+
+	-- new cells
+	local cell00 = Cell:new({}, {table.unpack(k)}, limits00, self, nil, 1, {table.unpack(zeroes)}) -- bottom left
+	local cell10 = Cell:new({}, {table.unpack(k)}, limits10, self, nil, 2, {table.unpack(zeroes)}) -- bottom right
+	local cell11 = Cell:new({}, {table.unpack(k)}, limits11, self, nil, 3, {table.unpack(zeroes)}) -- top right
+	local cell01 = Cell:new({}, {table.unpack(k)}, limits01, self, nil, 4, {table.unpack(zeroes)}) -- top left
+	local newCells = {cell00, cell10, cell11, cell01}
+
+	self.children = newCells
+	
+	for keyC,newCell in pairs(newCells) do
+		local corner = {newCell.limits[3], newCell.limits[2]}
+		--local displacedCorner = {2*newCell.limits[3] - newCell.limits[1], newCell.limits[2]}
+		for keyS,segment in pairs(segments) do
+			if newCell:isSegmentInside(segment) then
+				table.insert(newCell.segments, segment)
+				newCell.numShapeSegments[segment.shapeIndex] = newCell.numShapeSegments[segment.shapeIndex] + 1
+			end
+			if keyC ~= 2 then
+				newCell.k[segment.shapeIndex] = newCell.k[segment.shapeIndex] + segment:testIntersection(corner)
+			end
+		end
+		if keyC ~= 2 then
+			for keyI,shortcut in pairs(self.shortcutIn) do
+				if shortcut.segment.initialPoint[2] < corner[2] then
+					newCell.k[shortcut.shapeIndex] = newCell.k[shortcut.shapeIndex] - 1
+				end
+			end
+			for keyO,shortcut in pairs(self.shortcutOut) do
+				if shortcut.segment.endPoint[2] < corner[2] then
+					newCell.k[shortcut.shapeIndex] = newCell.k[shortcut.shapeIndex] + 1
+				end
+			end
+		end
+		newCell:findUsefulShapes()
+		newCell:subdivide()
+	end
+	self:free()
+end
+
+function Cell:findUsefulShapes()
+	--print("finding useful shapes")
+	--print(table.unpack(self.numShapeSegments))
+	for key,numShapes in pairs(self.numShapeSegments) do
+		if numShapes > 0 then
+			--print("useful - ", key)
+			table.insert(self.usefulShapes, key)
+		elseif self.k[key] ~= 0 then
+			table.insert(self.usefulShapes, key)
+		end
+	end
+end
+
+function Cell:calculateK()
+	if self.index == 2 then return end
+	local corner = {self.limits[3], self.limits[2]}
+	for key, segment in pairs(self.parent.segments) do
+		newCell.k[segment.shapeIndex] = newCell.k[segment.shapeIndex] + segment:testIntersection(corner)
+	end
+end
+
+function Cell:findLeaf(pixel)
+	--print("find leaf", table.unpack(self.limits))
+	if self.children == nil or #self.children == 0 then
+		--print("no children")
+		return self
+	end
+	--print("children", table.unpack(self.children))
+	for key, child in pairs(self.children) do
+		--print(child)
+		if child:isPointInside(pixel) then
+			--print("yes")
+			return child:findLeaf(pixel)
+		end
+	end
+	--print("deu zebra")
+	return nil
+end
+
+function Cell:printTree()
+	print("PRINT TREE")
+	if self.k ~= nil then
+		print(table.unpack(self.k))
+		print(table.unpack(self.limits))
+		for key,segment in pairs(self.segments) do
+			--print("initial", table.unpack(segment.segment.initialPoint))
+			--print("end",table.unpack(segment.segment.endPoint))
+		end
+	end
+	if self.shortcutIn ~= nil then print("shortcutIn"); print(#(self.shortcutIn)) end
+	if self.shortcutOut ~= nil then print("shortcutOut"); print(#(self.shortcutOut)) end
+	if self.children ~= nil then
+		for key, child in pairs(self.children) do
+			child:printTree()
+		end
+	end
+end
+
+
 --------------------------------------
 -- Segment class
 --------------------------------------
@@ -47,11 +299,61 @@ end
 local Segment = {}
 Segment.__index = Segment
 
-function Segment:new(segment, segType)
+function Segment:new(segment, segType, shapeIndex)
 	local Segment = setmetatable({}, Segment)
 	Segment.segment = segment
 	Segment.type = segType
+	Segment.shapeIndex = shapeIndex
+	Segment.shortcut = {}
 	return Segment
+end
+
+function Segment:testCrossHorizontalLine(p1, p2)
+	local segType = self.type
+	local seg = self.segment
+	if segType == "linear" then
+		if countLinear(seg, p1[1], p1[2]) ~= countLinear(seg, p2[1], p2[2]) then return true end
+	elseif segType == "quadratic" then
+		if countQuadratic(seg, p1[1], p1[2]) ~= countQuadratic(seg, p2[1], p2[2]) then return true end
+	elseif segType == "cubic" then
+		if countCubic(seg, p1[1], p1[2]) ~= countCubic(seg, p2[1], p2[2]) then return true end
+	end
+end
+
+function Segment:testCrossVerticalLine(p1, p2)
+	local segType = self.type
+	local seg = self.segment
+	if segType == "linear" then
+		if countLinearVertical(seg, p1[1], p1[2]) ~= countLinearVertical(seg, p2[1], p2[2]) then return true end
+	elseif segType == "quadratic" then
+		if countQuadraticVertical(seg, p1[1], p1[2]) ~= countQuadraticVertical(seg, p2[1], p2[2]) then return true end
+	elseif segType == "cubic" then
+		if countCubicVertical(seg, p1[1], p1[2]) ~= countCubicVertical(seg, p2[1], p2[2]) then return true end
+	end
+end
+
+function Segment:testIntersection(p1)
+	local segType = self.type
+	local seg = self.segment
+	if segType == "linear" then
+		return countLinear(seg, p1[1], p1[2])
+	elseif segType == "quadratic" then
+		return countQuadratic(seg, p1[1], p1[2])
+	elseif segType == "cubic" then
+		return countCubic(seg, p1[1], p1[2])
+	end
+end
+
+function Segment:addShortcutIn(cell)
+	self.shortcut[cell] = -1
+end
+
+function Segment:addShortcutOut(cell)
+	self.shortcut[cell] = 1
+end
+
+function Segment:getShortcut(cell)
+	return self.shortcut[cell] or 0
 end
 
 --------------------------------------
@@ -59,9 +361,10 @@ end
 -------------------------------------
 
 myAccelerated = {}
-
+quadTree = nil
 
 function roundupPow2(num)
+	if num == 0 then return 0 end
 	local iter = num
 	local result = 1
 	while iter > 0 do
@@ -328,6 +631,10 @@ function createLinearSegment(initialPoint, endPoint)
     	delta = -1
     end
 
+    if endPoint == nil then print("aqui foi nil") end
+
+    linearSegment["initialPoint"] = initialPoint
+    linearSegment["endPoint"] = endPoint
     linearSegment["delta"] = delta
     linearSegment["boundingBox"] = boundingBox
     linearSegment["implicit"] = line
@@ -448,21 +755,43 @@ function innerProduct(v1, v2)
     return result
 end
 
-function countLinear(segment, x, y)
+function countLinear(segment, x, y, vertical)
 	local intersections = 0
 	local pixel = {x, y, 1}
 	local boundingBox = segment["boundingBox"]
 	local implicit = segment["implicit"]
 	local delta = segment["delta"] -- tells me if I have to sum or subtract 1 from intersections
 
-    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+    if  y >= boundingBox["Ymin"] and y < boundingBox["Ymax"] and x < boundingBox["Xmax"] then
     	if (x < boundingBox["Xmin"]) then
     		intersections = intersections + delta
     	else
     		local value = evalLine(pixel, implicit)
-            if (implicit[1] > 0 and value < 0) then
+            if (implicit[1] > 0 and value <= 0) then
                 intersections = intersections + 1
-            elseif (implicit[1] < 0 and value > 0) then
+            elseif (implicit[1] < 0 and value >= 0) then
+                intersections = intersections - 1
+    		end
+    	end
+    end
+    return intersections
+end
+
+function countLinearVertical(segment, x, y)
+	local intersections = 0
+	local pixel = {x, y, 1}
+	local boundingBox = segment["boundingBox"]
+	local implicit = segment["implicit"]
+	local delta = segment["delta"] -- tells me if I have to sum or subtract 1 from intersections
+
+    if  x >= boundingBox["Xmin"] and x < boundingBox["Xmax"] and y < boundingBox["Ymax"] then
+    	if (y < boundingBox["Ymin"]) then
+    		intersections = intersections + delta
+    	else
+    		local value = evalLine(pixel, implicit)
+            if (implicit[2] > 0 and value < 0) then
+                intersections = intersections + 1
+            elseif (implicit[2] < 0 and value > 0) then
                 intersections = intersections - 1
     		end
     	end
@@ -471,8 +800,6 @@ function countLinear(segment, x, y)
 end
 
 function cubicImplicitForm(points, x, y)
-	local intersections = 0
-
 	local x1 = points[2][1] - points[1][1]
 	local y1 = points[2][2] - points[1][2]
 	local x2 = points[3][1] - points[1][1]
@@ -499,50 +826,10 @@ function cubicImplicitForm(points, x, y)
 					- ((-3*x1 + 3*x2 - x3)*yp + xp*(3*y1 - 3*y2 + y3))*((-3*x1 + 3*x2 - x3)*yp
 					+ 9*x2*y1 - 9*x1*y2 + xp*(3*y1 - 3*y2 + y3)))
 
-				--[[    local a = -27*x1*x1*x1 + 81*x1*x1*x2 - 81*x1*x2*x2 + 27*x2*x2*x2 - 27*x1*x1*x3 + 
-				    54*x1*x2*x3 - 27*x2*x2*x3 - 9*x1*x3*x3 + 9*x2*x3*x3 -x3*x3*x3
-				    
-				    local b=27*y1*y1*y1 - 81*y1*y1*y2 + 81*y1*y2*y2 - 27*y2*y2*y2 + 27*y1*y1*y3 - 
-				    54*y1*y2*y3 + 27*y2*y2*y3 + 9*y1*y3*y3 - 9*y2*y3*y3 +y3*y3*y3
-				    
-				    local c=-81*x1*y1*y1 + 81*x2*y1*y1 - 27*x3*y1*y1 + 162*x1*y1*y2 - 162*x2*y1*y2 + 
-				    54*x3*y1*y2 - 81*x1*y2*y2 + 81*x2*y2*y2 - 27*x3*y2*y2 - 54*x1*y1*y3 + 
-				    54*x2*y1*y3 - 18*x3*y1*y3 + 54*x1*y2*y3 - 54*x2*y2*y3 + 
-				    18*x3*y2*y3 - 9*x1*y3*y3 + 9*x2*y3*y3 - 3*x3*y3*y3
-				    
-				    local d=81*x1*x1*y1 - 162*x1*x2*y1 + 81*x2*x2*y1 + 54*x1*x3*y1 - 54*x2*x3*y1 + 
-				    9*x3*x3*y1 - 81*x1*x1*y2 + 162*x1*x2*y2 - 81*x2*x2*y2 - 54*x1*x3*y2 + 
-				    54*x2*x3*y2 - 9*x3*x3*y2 + 27*x1*x1*y3 - 54*x1*x2*y3 + 27*x2*x2*y3 + 
-				    18*x1*x3*y3 - 18*x2*x3*y3 + 3*x3*x3*y3
-				    
-				    local e=81*x1*x2*x2*y1 - 54*x1*x1*x3*y1 - 81*x1*x2*x3*y1 + 54*x1*x3*x3*y1 - 
-				    9*x2*x3*x3*y1 - 81*x1*x1*x2*y2 + 162*x1*x1*x3*y2 - 81*x1*x2*x3*y2 + 
-				    27*x2*x2*x3*y2 - 18*x1*x3*x3*y2 + 54*x1*x1*x1*y3 - 81*x1*x1*x2*y3 + 
-				    81*x1*x2*x2*y3 - 27*x2*x2*x2*y3 - 54*x1*x1*x3*y3 + 27*x1*x2*x3*y3
-				    
-				    local f=-54*x3*y1*y1*y1 + 81*x2*y1*y1*y2 + 81*x3*y1*y1*y2 - 81*x1*y1*y2*y2 - 
-				    81*x3*y1*y2*y2 + 27*x3*y2*y2*y2 + 54*x1*y1*y1*y3 - 162*x2*y1*y1*y3 + 
-				    54*x3*y1*y1*y3 + 81*x1*y1*y2*y3 + 81*x2*y1*y2*y3 - 27*x3*y1*y2*y3 - 
-				    27*x2*y2*y2*y3 - 54*x1*y1*y3*y3 + 18*x2*y1*y3*y3 + 9*x1*y2*y3*y3
-				    
-				    local g=-81*x2*x2*y1*y1 + 108*x1*x3*y1*y1 + 81*x2*x3*y1*y1 - 54*x3*x3*y1*y1 - 
-				    243*x1*x3*y1*y2 + 81*x2*x3*y1*y2 + 27*x3*x3*y1*y2 + 81*x1*x1*y2*y2 + 
-				    81*x1*x3*y2*y2 - 54*x2*x3*y2*y2 - 108*x1*x1*y1*y3 + 243*x1*x2*y1*y3 - 
-				    81*x2*x2*y1*y3 - 9*x2*x3*y1*y3 - 81*x1*x1*y2*y3 - 81*x1*x2*y2*y3 + 
-				    54*x2*x2*y2*y3 + 9*x1*x3*y2*y3 + 54*x1*x1*y3*y3 - 27*x1*x2*y3*y3
-				    
-				    local h=-27*x1*x3*x3*y1*y1 + 81*x1*x2*x3*y1*y2 - 81*x1*x1*x3*y2*y2 - 
-				    81*x1*x2*x2*y1*y3 + 54*x1*x1*x3*y1*y3 + 81*x1*x1*x2*y2*y3 - 27*x1*x1*x1*y3*y3
-				    local i=27*x3*x3*y1*y1*y1 - 81*x2*x3*y1*y1*y2 + 81*x1*x3*y1*y2*y2 + 
-				    81*x2*x2*y1*y1*y3 - 54*x1*x3*y1*y1*y3 - 81*x1*x2*y1*y2*y3 + 
-				    27*x1*x1*y1*y3*y3
-
-				    local resultant = a*math.pow(yp,3)+b*math.pow(xp,3)+c*xp*xp*y+d*xp*yp*yp+e*yp*yp+f*xp*xp+g*xp*yp+h*yp+i*xp
-				--]]
 	local orientation = 1
 	if y3 < 0 then orientation = -1 end
 
-	if (resultant > 0 and signTest < 0) or (resultant < 0 and signTest > 0) then
+	if (resultant >= 0 and signTest < 0) or (resultant <= 0 and signTest > 0) then
 		return orientation
 	end
 	return 0
@@ -551,7 +838,7 @@ end
 function countCubic(segment, x, y)
 	local intersections = 0
 	local pixel = {x, y, 1}
-	
+
 	local resultant = segment["resultant"]
 	local delta = segment["delta"]
 	local boundingBox = segment["boundingBox"]
@@ -563,7 +850,7 @@ function countCubic(segment, x, y)
 	local p1 = RP2ToR2(vertex)
 	local p2 = controlPoints[4]
 
-    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+    if  y >= boundingBox["Ymin"] and y < boundingBox["Ymax"] and x < boundingBox["Xmax"] then
     	if (x < boundingBox["Xmin"]) then
     		intersections = intersections + delta
     	else
@@ -580,6 +867,52 @@ function countCubic(segment, x, y)
     	end
     end
 
+	return intersections
+end
+
+function countCubicVertical(segment, x, y)
+	local intersections = 0
+	local pixel = {x, y, 1}
+
+	local resultant = segment["resultant"]
+	local delta = segment["delta"]
+	local boundingBox = segment["boundingBox"]
+	local vertex = segment["vertex"]
+	local positionVertex = segment["positionVertex"]
+	local controlPoints = segment["controlPoints"]
+
+	local p0 = controlPoints[1]
+	local p1 = RP2ToR2(vertex)
+	local p2 = controlPoints[4]
+
+    if  x >= boundingBox["Xmin"] and x < boundingBox["Xmax"] and y < boundingBox["Ymax"] then
+    	if (y < boundingBox["Ymin"]) then
+    		intersections = intersections + delta
+    	else
+    		local triangleTest = triangleTest(p0,p1,p2, pixel)
+    		if positionVertex[1]*positionVertex[2] == -1 then
+	    		if positionVertex[2] == -1 then -- down positionVertex
+	    			if triangleTest == 1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + (1 - math.abs(resultant(x,y)))*delta
+	    			end
+	    		elseif positionVertex[2] == 1 then -- up positionVertex
+	    			if triangleTest == -1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + (1 - math.abs(resultant(x,y)))*delta
+	    			end
+		    	end
+		    elseif positionVertex[1]*positionVertex[2] == 1 then
+	    		if positionVertex[2] == -1 then -- down positionVertex
+	    			if triangleTest == 1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+	    		elseif positionVertex[2] == 1 then -- up positionVertex
+	    			if triangleTest == -1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+		    	end
+		    end
+    	end
+    end
 	return intersections
 end
 
@@ -600,6 +933,8 @@ function getQuadraticSegment(newPoints)
     local quadraticSegment = {}
     quadraticSegment["boundingBox"] = boundingBox
     quadraticSegment["controlPoints"] = newPoints
+    quadraticSegment["initialPoint"] = initialPoint
+    quadraticSegment["endPoint"] = endPoint
     quadraticSegment["resultant"] = resultant
     quadraticSegment["positionVertex"] = positionVertex
     quadraticSegment["delta"] = delta
@@ -677,7 +1012,7 @@ function quadraticImplicitForm(points, x, y)
 	local orientation = 1
 	if y2 < 0 then orientation = -1 end
 
-	if (resultant > 0 and xDerivative < 0) or (resultant < 0 and xDerivative > 0) then
+	if (resultant >= 0 and xDerivative < 0) or (resultant <= 0 and xDerivative > 0) then
 		return orientation
 	end
 	return 0
@@ -718,6 +1053,52 @@ function quadraticImplicitForm1(points, x, y)
 	return 0
 end
 
+function countQuadraticVertical(segment, x, y)
+	local intersections = 0
+	local pixel = {x, y, 1}
+	
+	local resultant = segment["resultant"]
+	local delta = segment["delta"]
+	local boundingBox = segment["boundingBox"]
+	local positionVertex = segment["positionVertex"]
+	local controlPoints = segment["controlPoints"]
+
+	local p0 = controlPoints[1]
+	local p1 = RP2ToR2(controlPoints[2])
+	local p2 = controlPoints[3]
+
+    if  x >= boundingBox["Xmin"] and x < boundingBox["Xmax"] and y < boundingBox["Ymax"] then
+    	if (y < boundingBox["Ymin"]) then
+    		intersections = intersections + delta
+    	else
+    		local triangleTest = triangleTest(p0,p1,p2, pixel)
+    		if positionVertex[1]*positionVertex[2] == -1 then
+	    		if positionVertex[2] == -1 then -- down positionVertex
+	    			if triangleTest == 1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + (1 - math.abs(resultant(x,y)))*delta
+	    			end
+	    		elseif positionVertex[2] == 1 then -- up positionVertex
+	    			if triangleTest == -1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + (1 - math.abs(resultant(x,y)))*delta
+	    			end
+		    	end
+		    elseif positionVertex[1]*positionVertex[2] == 1 then
+	    		if positionVertex[2] == -1 then -- down positionVertex
+	    			if triangleTest == 1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+	    		elseif positionVertex[2] == 1 then -- up positionVertex
+	    			if triangleTest == -1 then intersections = intersections + delta
+	    			elseif triangleTest == 0 then intersections = intersections + resultant(x,y)
+	    			end
+		    	end
+		    end
+    	end
+    end
+
+	return intersections
+end
+
 function countQuadratic(segment, x, y)
 	local intersections = 0
 	local pixel = {x, y, 1}
@@ -732,7 +1113,7 @@ function countQuadratic(segment, x, y)
 	local p1 = RP2ToR2(controlPoints[2])
 	local p2 = controlPoints[3]
 
-    if  y > boundingBox["Ymin"] and y <= boundingBox["Ymax"] and x <= boundingBox["Xmax"] then
+    if  y >= boundingBox["Ymin"] and y < boundingBox["Ymax"] and x < boundingBox["Xmax"] then
     	if (x < boundingBox["Xmin"]) then
     		intersections = intersections + delta
     	else
@@ -904,12 +1285,12 @@ function getLinearGradientInfo(paint)
 	local lg = paint:get_linear_gradient_data()
 	local ramp = lg:get_color_ramp()
 	local opacity = paint:get_opacity()
-    print("", "p1", lg:get_x1(), lg:get_y1())
-    print("", "p2", lg:get_x2(), lg:get_y2())
-    print("", ramp:get_spread())
-    for i, stop in ipairs(ramp:get_color_stops()) do
-        print("", stop:get_offset(), "->", table.unpack(stop:get_color()))
-    end
+    --print("", "p1", lg:get_x1(), lg:get_y1())
+    --print("", "p2", lg:get_x2(), lg:get_y2())
+    --print("", ramp:get_spread())
+    --for i, stop in ipairs(ramp:get_color_stops()) do
+    --    print("", stop:get_offset(), "->", table.unpack(stop:get_color()))
+    --end
 	local sampledColors = uniformSampling(ramp, opacity)
 	return sampledColors
 end
@@ -1069,7 +1450,7 @@ function uniformSampling(ramp,opacity)
     
     for i=1,#t-1 do  --for all stop intervals
     	local inverseDenominator = 1/(t[i+1]-t[i])
-    	print(inverseDenominator)
+    	--print(inverseDenominator)
     	while curSample <= t[i+1] do
     		local interpolatedColor = {}
     		if curSample == t[i] then
@@ -1091,19 +1472,38 @@ function uniformSampling(ramp,opacity)
     return colors
 end
 
-function countIntersections(segments, x, y)
-	local intersections = 0
+function countIntersections(cell, x, y, shapeIndex)
+	local segments = cell.segments
+	local intersections = cell.k[shapeIndex]
 	for key, segment in pairs(segments) do
-		if segment.type == "linear" then
-			intersections = intersections + countLinear(segment.segment, x, y)
-		elseif segment.type == "cubic" then
-			intersections = intersections + countCubic(segment.segment, x, y)
-		elseif segment.type == "quadratic" then
-			intersections = intersections + countQuadratic(segment.segment, x, y)
+		if segment.shapeIndex == shapeIndex then
+			if segment.type == "linear" then
+				intersections = intersections + countLinear(segment.segment, x, y)-- + cell:getShortcut(segment)-- + segment:getShortcut(cell)
+			elseif segment.type == "cubic" then
+				intersections = intersections + countCubic(segment.segment, x, y)-- + cell:getShortcut(segment)-- + segment:getShortcut(cell)
+			elseif segment.type == "quadratic" then
+				intersections = intersections + countQuadratic(segment.segment, x, y)-- + cell:getShortcut(segment)-- + segment:getShortcut(cell)
+			end
+		end
+	end
+	-- shortcuts
+	for key,segment in pairs(cell.shortcutIn) do
+		if segment.shapeIndex == shapeIndex then
+			if y >= segment.segment.initialPoint[2]
+			then
+				intersections = intersections - 1
+			end
+		end
+	end
+	for key,segment in pairs(cell.shortcutOut) do
+		if segment.shapeIndex == shapeIndex then
+			if y >= segment.segment.endPoint[2]
+			then
+				intersections = intersections + 1
+			end
 		end
 	end
 	return intersections
-
 end
 
 
@@ -1130,6 +1530,24 @@ function mixColors(colorsToMix)
 	return R, G, B, 1
 end
 
+
+local function preSampleTeste(accelerated, x, y)
+	local cell = quadTree:findLeaf({x,y})
+	local numShapeSegments = cell.numShapeSegments
+	local usefulShapes = cell.usefulShapes
+
+	local colors = {}
+	local red = {255,1,1,1}
+	local green = {1,255,1,1}
+	local blue = {1,1,255,1}
+	local any = {120,40,80,1}
+
+	colors = {red, green, blue, any}
+
+	return colors[(cell.depth + cell.index)%4 + 1]
+end
+
+
 local function preSample(accelerated, x, y)
     -- This function should return the color of the sample
     -- at coordinates (x,y).
@@ -1139,19 +1557,33 @@ local function preSample(accelerated, x, y)
     local scene = accelerated
 
     -- index of accelerated data (one for every pixel)
-    local shape_index = 1
+    --local shape_index = 1
 
-    scene:get_scene_data():iterate{
-        painted_shape = function(self, rule, shape, paint)
-            local shapeAccelerated = myAccelerated[shape_index]
-            local intersections = 0
+	local cell = quadTree:findLeaf({x,y})
+	local numShapeSegments = cell.numShapeSegments
+	--print(table.unpack(numShapeSegments))
+	local usefulShapes = cell.usefulShapes
 
-        	local segments = shapeAccelerated["segments"]
-         	local shapeBoundingBox = shapeAccelerated["shapeBoundingBox"]
+	--if cell.index == 1 then return {255,1,1,1} end
+	--if cell.index == 2 then return {1,1,255,1} end
+	--if cell.index == 3 then return {255,255,1,1} end
+	--if cell.index == 4 then return {1,255,255,1} end
 
-         	if testIndideBoundingBox(shapeBoundingBox, x, y) then
-	        	--intersections = countLinear(linearSegments, x, y) + countQuadratic(quadraticSegments, x, y) + countQuadratic(rationalSegments, x, y) + countCubic(cubicSegments, x, y)
-	        	intersections = countIntersections(segments, x, y)
+	if #usefulShapes > 0 then
+		--print(table.unpack(usefulShapes))
+		for key,shape_index in pairs(usefulShapes) do
+	        local shapeAccelerated = myAccelerated[shape_index]
+	        local shape = shapeAccelerated["shape"]
+	        local paint = shapeAccelerated["paint"]
+	        local rule = shapeAccelerated["rule"]
+	        --rule = winding_rule.odd
+	        local intersections = 0
+
+	    	--local segments = shapeAccelerated["segments"]
+	     	local shapeBoundingBox = shapeAccelerated["shapeBoundingBox"]
+
+	     	if testIndideBoundingBox(shapeBoundingBox, x, y) then
+	        	intersections = countIntersections(cell, x, y, shape_index)
 	            local intersectionsBool = (intersections ~= 0)
 	            if rule == winding_rule.odd then
 	                intersectionsBool = (intersections % 2 == 1)
@@ -1190,13 +1622,22 @@ local function preSample(accelerated, x, y)
 	                	print("unknown paint")
 	                end
 	            end
-         	end
-            shape_index = shape_index + 1
-        end
-    }
+	     	end
+		end
+	end
+
+    --shape_index = shape_index + 1
+    --if math.abs(x - cell.limits[1]) < 0.8 then return {255,1,1,1} end
+    --if math.abs(x - cell.limits[3]) < 0.8 then return {1,1,255,1} end
+    --if math.abs(y - cell.limits[2]) < 0.8 then return {255,1,255,1} end
+    --if math.abs(y - cell.limits[4]) < 0.8 then return {1,255,1,1} end
+
+	--if x > 64 and x < 96 and y > 64 and y < 96 then print("SIZE OF COLORS", #colors) end
+
     if ( #colors > 0 ) then
     	local colorReturned = calculateColor(colors)
     	--print(table.unpack(colorReturned))
+    	--if x > 64 and x < 96 and y > 64 and y < 96 then print("RETURN", table.unpack(colorReturned)) end
         return colorReturned--table.unpack(colorReturned)
     end
     return background:get_solid_color() --table.unpack(background:get_solid_color()) -- no color painted
@@ -1214,7 +1655,6 @@ end
 -------------------
 --
 ------------------
-
 
 
 local function parse(args)
@@ -1263,6 +1703,10 @@ local function parse(args)
 end
 
 
+----------------------------------------
+-- Acceleration structure
+----------------------------------------
+
 
 ----------------------------------------
 -- ACCELERATE
@@ -1276,11 +1720,10 @@ function _M.accelerate(scene, window, viewport, args)
     end
 
     print("wv", table.unpack(viewport))
-    print(roundupPow2(viewport[3]), roundupPow2(viewport[4]))
-    Cell:new()
+   	print(roundupPow2(viewport[3]), roundupPow2(viewport[4]))
 
     scene = scene:windowviewport(window, viewport)
-    stderr("scene xf %s\n", scene:get_xf())
+    --stderr("scene xf %s\n", scene:get_xf())
 
     -- stack of transformations
     local transformationStack = {}
@@ -1289,12 +1732,31 @@ function _M.accelerate(scene, window, viewport, args)
     -- index of accelerated data (one for every pixel)
     local shape_index = 1
 
+    local segments = {}
+
+
+    -- create a new scene data
+    local new_sd = svg.scene_data()
+
+    -- copy the scene data to new_sd
+    scene:get_scene_data():iterate(new_sd)
+
+    local new_scene = svg.scene(new_sd):transformed(scene:get_xf())
+    local output = io.open('dump.svg', "w")
+    -- save our svg scene
+    svg.render(new_scene, window, viewport, output)
+    output:close()
+
+
     scene:get_scene_data():iterate{
         painted_shape = function(self, winding_rule, shape, paint)
             myAccelerated[shape_index] = {}
+            myAccelerated[shape_index]["shape"] = shape
+            myAccelerated[shape_index]["rule"] = winding_rule
+            myAccelerated[shape_index]["paint"] = paint
 
-            stderr("painted %s %s %s\n", winding_rule, shape:get_type(), paint:get_type())
-            stderr("  xf s %s\n", shape:get_xf())
+            --stderr("painted %s %s %s\n", winding_rule, shape:get_type(), paint:get_type())
+            --stderr("  xf s %s\n", shape:get_xf())
 
             local shapeType = shape:get_type()
 
@@ -1303,7 +1765,7 @@ function _M.accelerate(scene, window, viewport, args)
             local shape_xf = sceneCurXf*shape:get_xf()
             local paint_xf = sceneCurXf*paint:get_xf()
 
-            print("transformation depth", #transformationStack)
+            --print("transformation depth", #transformationStack)
         	
             if paint:get_type() == paint_type.linear_gradient then
             	local sampledColors = getLinearGradientInfo(paint)
@@ -1327,18 +1789,14 @@ function _M.accelerate(scene, window, viewport, args)
 
         	local beginContour = {}
         	local endOpenContour = {}
-        	local segments = {}
-        	--local linearSegments = {}
-        	--local quadraticSegments = {}
-        	--local cubicSegments = {}
-        	--local rationalSegments = {}
+        	--local segments = {}
 
         	local shapeBoundingBox = {}
         	local doubleAndInflectionParameters = {}
 
 	        pdata:iterate(filter.make_input_path_f_xform(shape_xf, filter.make_input_path_f_find_cubic_parameters({
 	            begin_contour = function(self, x0, y0)
-	                print("", "begin_contour", x0, y0)
+	                --print("", "begin_contour", x0, y0)
 	                beginContour = {x0,y0}
 	            end,
 				inflection_parameter = function(self, t)
@@ -1348,20 +1806,20 @@ function _M.accelerate(scene, window, viewport, args)
 	            	table.insert(doubleAndInflectionParameters, t)
 				end,
 	            end_open_contour = function(self, x0, y0)
-	                print("", "end_open_contour", x0, y0)
+	                --print("", "end_open_contour", x0, y0)
 	                endOpenContour = {x0,y0}
 
 	                if beginContour ~= endOpenContour then
 	                	local linearSegment = createLinearSegment(endOpenContour, beginContour)
 		                --linearSegments[#linearSegments + 1] = linearSegment
-		                segments[#segments + 1] = Segment:new(linearSegment, "linear")
+		                segments[#segments + 1] = Segment:new(linearSegment, "linear", shape_index)
 	                end
 	            end,
 	            end_closed_contour = function(self, x0, y0)
-	                print("", "end_closed_contour", x0, y0)
+	                --print("", "end_closed_contour", x0, y0)
 	            end,
 	            linear_segment = function(self, x0, y0, x1, y1)
-	                print("original", "linear_segment", x0, y0, x1, y1)
+	                --print("original", "linear_segment", x0, y0, x1, y1)
 
 	                local initialPoint = {x0,y0}
 	                local endPoint = {x1,y1}
@@ -1371,12 +1829,11 @@ function _M.accelerate(scene, window, viewport, args)
 	                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
 
 	                --linearSegments[#linearSegments + 1] = linearSegment
-	                local segment = Segment:new(linearSegment, "linear")
-	                print("class", segment, segment.segment, segment.type)
+	                local segment = Segment:new(linearSegment, "linear", shape_index)
 	                segments[#segments + 1] = segment
 	            end,
 	            quadratic_segment = function(self, x0, y0, x1, y1, x2, y2)
-	                print("original", "quadratic_segment", x0, y0, x1, y1, x2, y2)
+	                --print("original", "quadratic_segment", x0, y0, x1, y1, x2, y2)
 
 	                local points = {{x0,y0,1}, {x1,y1,1}, {x2,y2,1}}
 
@@ -1393,23 +1850,23 @@ function _M.accelerate(scene, window, viewport, args)
 	                	local newPoints = reparametrization(criticalPoints[i-1], criticalPoints[i], points)
 
 	                	if not pointsAreColinear(newPoints) then
-                			print("transformed", "quadratic_segment", newPoints[1][1], newPoints[1][2],
-                					newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
+                			--print("transformed", "quadratic_segment", newPoints[1][1], newPoints[1][2],
+                					--newPoints[2][1], newPoints[2][2], newPoints[3][1], newPoints[3][2])
 		                	local quadraticSegment = getQuadraticSegment(newPoints)
 	                		shapeBoundingBox = updateBoundingBox(quadraticSegment["boundingBox"], shapeBoundingBox)
 			                --quadraticSegments[#quadraticSegments + 1] = quadraticSegment	 
-			                segments[#segments + 1] = Segment:new(quadraticSegment, "quadratic")               	
+			                segments[#segments + 1] = Segment:new(quadraticSegment, "quadratic", shape_index)               	
 		            	else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
-			                print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
+			                --print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
 			                --linearSegments[#linearSegments + 1] = linearSegment
-			                segments[#segments + 1] = Segment:new(linearSegment, "linear")
+			                segments[#segments + 1] = Segment:new(linearSegment, "linear", shape_index)
    		                end
 		            end
 	            end,
 	            cubic_segment = function(self, x0, y0, x1, y1, x2, y2, x3, y3)
-	                print("original", "cubic_segment", x0, y0, x1, y1, x2, y2, x3, y3)
+	                --print("original", "cubic_segment", x0, y0, x1, y1, x2, y2, x3, y3)
 
 	                local points = {{x0,y0,1}, {x1,y1,1}, {x2,y2,1}, {x3,y3,1}}
 
@@ -1422,7 +1879,7 @@ function _M.accelerate(scene, window, viewport, args)
 	                end
 
 	                local secondExtremePoints = getMonotonicIntervals(d2_func_x, d2_func_y)
-	                --print("secondExtremePoints", table.unpack(secondExtremePoints))
+	                ----print("secondExtremePoints", table.unpack(secondExtremePoints))
 
                     -- bissect intervals
 				    local d_func_x = function(t)
@@ -1441,31 +1898,31 @@ function _M.accelerate(scene, window, viewport, args)
 	                table.sort(criticalPoints)
 	                criticalPoints = removeRepeatedValuesInSortedList(criticalPoints)
 
-	                --print("criticalPoints", table.unpack(criticalPoints))
+	                ----print("criticalPoints", table.unpack(criticalPoints))
 
 	                for i=2,#criticalPoints do -- create quadratic segments
 	                	local newPoints = reparametrization(criticalPoints[i-1], criticalPoints[i], points)
 
 	                	if pointsAreColinear(newPoints) then
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[4])
-			                --print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[4][1], newPoints[4][2])
+			                ----print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[4][1], newPoints[4][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
 			                --linearSegments[#linearSegments + 1] = linearSegment
-			                segments[#segments + 1] = Segment:new(linearSegment, "linear")
+			                segments[#segments + 1] = Segment:new(linearSegment, "linear", shape_index)
 			            elseif pointsAreQuadratic(newPoints) then
 			            	local Q = {-0.5*newPoints[1][1] + 1.5*newPoints[2][1], -0.5*newPoints[1][2] + 1.5*newPoints[2][2], 1} -- control point of degeneration
 			            	local equivalentPoints = {newPoints[1], Q, newPoints[4]}
-			            	print("transformed", "quadratic_segment", equivalentPoints[1][1], equivalentPoints[1][2],
-			            											equivalentPoints[2][1], equivalentPoints[2][2],
-			            											equivalentPoints[3][1], equivalentPoints[3][2])
+			            	--print("transformed", "quadratic_segment", equivalentPoints[1][1], equivalentPoints[1][2],
+			            											--equivalentPoints[2][1], equivalentPoints[2][2],
+			            											--equivalentPoints[3][1], equivalentPoints[3][2])
 			            	local quadraticSegment = getQuadraticSegment(equivalentPoints)
 	                		shapeBoundingBox = updateBoundingBox(quadraticSegment["boundingBox"], shapeBoundingBox)
 			                --quadraticSegments[#quadraticSegments + 1] = quadraticSegment
-			                segments[#segments + 1] = Segment:new(quadraticSegment, "quadratic")
+			                segments[#segments + 1] = Segment:new(quadraticSegment, "quadratic", shape_index)
 	                	elseif not (arePointsEqual(newPoints[1], newPoints[2]) and
 	                				arePointsEqual(newPoints[2], newPoints[3]) and
 	                				arePointsEqual(newPoints[3], newPoints[4])) then
-		                	--print("transformed", "cubic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2],
+		                	----print("transformed", "cubic_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2],
 		                	--										newPoints[3][1], newPoints[3][2], newPoints[4][1], newPoints[4][2])
 
 		                	local initialPoint = newPoints[1]
@@ -1491,21 +1948,23 @@ function _M.accelerate(scene, window, viewport, args)
 
 			                cubicSegment["boundingBox"] = boundingBox
 			                cubicSegment["controlPoints"] = newPoints
+			                cubicSegment["initialPoint"] = initialPoint
+			                cubicSegment["endPoint"] = endPoint
 			                cubicSegment["resultant"] = resultant
 			                cubicSegment["vertex"] = vertex
 			                cubicSegment["positionVertex"] = positionVertex
 			                cubicSegment["delta"] = delta
 			                --cubicSegments[#cubicSegments + 1] = cubicSegment
-			                segments[#segments + 1] = Segment:new(cubicSegment, "cubic")
+			                segments[#segments + 1] = Segment:new(cubicSegment, "cubic", shape_index)
 		                else
-		                	print("degeneration found")
+		                	--print("degeneration found")
 		                end        	
 	                end
 	                doubleAndInflectionParameters = {}
 	            end,
 	            rational_quadratic_segment = function(self, x0, y0, x1, y1, w1,
 	                x2, y2)
-	                print("original", "rational_quadratic_segment", x0, y0, x1, y1, w1, x2, y2)
+	                ----print("original", "rational_quadratic_segment", x0, y0, x1, y1, w1, x2, y2)
 
 	                local points = {{x0,y0,1},{x1,y1,w1},{x2,y2,1}}
 
@@ -1567,37 +2026,44 @@ function _M.accelerate(scene, window, viewport, args)
 
 							shapeBoundingBox = updateBoundingBox(rationalSegment["boundingBox"], shapeBoundingBox)
 			                --rationalSegments[#rationalSegments + 1] = rationalSegment
-			                segments[#segments + 1] = Segment:new(rationalSegment, "quadratic")
+			                segments[#segments + 1] = Segment:new(rationalSegment, "quadratic", shape_index)
 						else
 			                local linearSegment = createLinearSegment(newPoints[1], newPoints[3])
-			                --print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
+			                ----print("transformed", "linear_segment", newPoints[1][1], newPoints[1][2], newPoints[2][1], newPoints[2][2])
 			                shapeBoundingBox = updateBoundingBox(linearSegment["boundingBox"], shapeBoundingBox)
 			                --linearSegments[#linearSegments + 1] = linearSegment
-			                segments[#segments + 1] = Segment:new(linearSegment, "linear")
+			                segments[#segments + 1] = Segment:new(linearSegment, "linear", shape_index)
 			            end
 	                end
 	            end,
 	        })))
-	        --myAccelerated[shape_index]["linearSegments"] = linearSegments
-	        --myAccelerated[shape_index]["quadraticSegments"] = quadraticSegments
-	        --myAccelerated[shape_index]["cubicSegments"] = cubicSegments
-	        --myAccelerated[shape_index]["rationalSegments"] = rationalSegments
 	        myAccelerated[shape_index]["segments"] = segments
 	        myAccelerated[shape_index]["shapeBoundingBox"] = shapeBoundingBox
 
             shape_index = shape_index + 1
         end,
 		begin_transform = function(self, depth, xf)
-            print("begin transform", depth, xf)
+            --print("begin transform", depth, xf)
             local cur_xf = xf:transformed(transformationStack[depth+1])
             table.insert(transformationStack,cur_xf)
         end,
         end_transform = function(self, depth, xf)
-            print("end transform", depth, xf)
+            --print("end transform", depth, xf)
 	        table.remove(transformationStack)
         end,
     }
-    local quadTree = Cell:new(segments, nil, nil)
+    local limits = {(viewport[1]), (viewport[2]), roundupPow2(viewport[3]), roundupPow2(viewport[4])}
+    local k = {}
+    local numShapeSegments = {}
+    for i=1,shape_index-1 do k[i] = 0;  numShapeSegments[i] = 0; end
+    for key,segment in pairs(segments) do
+    	numShapeSegments[segment.shapeIndex] = numShapeSegments[segment.shapeIndex] + 1
+    end
+    quadTree = Cell:new(segments, k, limits, nil, nil, 0, numShapeSegments, 0)
+    quadTree:findUsefulShapes()
+    quadTree:subdivide()
+    --quadTree:printTree()
+    --table.unpack(quadTree:findLeaf({1,1}).k)
     return scene
 end
 
