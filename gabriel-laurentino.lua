@@ -1511,7 +1511,7 @@ local function preSampleTeste(accelerated, x, y)
 end
 
 
-local function preSample(accelerated, x, y)
+local function preSample(accelerated, x, y, cell)
     -- This function should return the color of the sample
     -- at coordinates (x,y).
 
@@ -1522,15 +1522,12 @@ local function preSample(accelerated, x, y)
     -- index of accelerated data (one for every pixel)
     --local shape_index = 1
 
-	local cell = quadTree:findLeaf({x,y})
-	local numShapeSegments = cell.numShapeSegments
-	--print(table.unpack(numShapeSegments))
-	local usefulShapes = cell.usefulShapes
-
 	--if cell.index == 1 then return {255,1,1,1} end
 	--if cell.index == 2 then return {1,1,255,1} end
 	--if cell.index == 3 then return {255,255,1,1} end
 	--if cell.index == 4 then return {1,255,255,1} end
+
+	local usefulShapes = cell.usefulShapes
 
 	if #usefulShapes > 0 then
 		--print(table.unpack(usefulShapes))
@@ -1553,10 +1550,9 @@ local function preSample(accelerated, x, y)
 	            end
 
 	            if (intersectionsBool) then -- non-zero
-	            	local opacity = paint:get_opacity()
 	            	--local paint_xf = paint:get_xf():inverse() --shapeAccelerated["xf"]
-	            	if paint:get_type() == paint_type.solid_color then
-		            	local blendColor = opacityAlphaBlending(paint:get_solid_color(),opacity)
+	            	if paint:get_type() == paint_type.solid_color then 
+		            	local blendColor = shapeAccelerated["blendColor"]--opacityAlphaBlending(paint:get_solid_color(),opacity)
 	                	table.insert(colors, blendColor)
 	                elseif paint:get_type() == paint_type.linear_gradient then
 				        local simplerXf = shapeAccelerated["simplerXf"]
@@ -1608,10 +1604,13 @@ end
 
 local function sample(accelerated, x, y)
 	local colorsToMix = {}
+	local cell = quadTree:findLeaf({x,y})
+	--local numShapeSegments = cell.numShapeSegments
+	--print(table.unpack(numShapeSegments))
 	for i=1,blueSize do
 		local dx = blue[blueSize].x[i]
 		local dy = blue[blueSize].x[i]
-		table.insert(colorsToMix, preSample(accelerated, x + dx, y + dy))
+		table.insert(colorsToMix, preSample(accelerated, x + dx, y + dy, cell))
 	end
 	return mixColors(colorsToMix)
 end
@@ -1729,8 +1728,11 @@ function _M.accelerate(scene, window, viewport, args)
             local paint_xf = sceneCurXf*paint:get_xf()
 
             --print("transformation depth", #transformationStack)
-        	
-            if paint:get_type() == paint_type.linear_gradient then
+        	if paint:get_type() == paint_type.solid_color then
+            	local opacity = paint:get_opacity()
+        		local blendColor = opacityAlphaBlending(paint:get_solid_color(),opacity)
+        		myAccelerated[shape_index]["blendColor"] = blendColor
+            elseif paint:get_type() == paint_type.linear_gradient then
             	local sampledColors = getLinearGradientInfo(paint)
             	local simplerXf = paint_xf:inverse()
             	myAccelerated[shape_index]["simplerXf"] = simplerXf
