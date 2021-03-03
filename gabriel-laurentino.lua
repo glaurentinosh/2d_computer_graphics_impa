@@ -17,43 +17,6 @@ local function stderr(...)
     io.stderr:write(string.format(...))
 end
 
---------------------------------------
--- debug svg
--------------------------------------
-
-function debug()
-	local new_sd = svg.scene_data()
-
-	-- add a stroked line
-	local path = svg.path{
-	    svg.M, 0, 0,
-	    svg.L, 200, 200,
-	}
-
-	new_sd:painted_shape(svg.winding_rule.non_zero, path:stroked(2), svg.solid_color(svg.color.black))
-
-	-- add a quadratic
-	local path = svg.path{
-	    svg.M, 0, 0,
-	    svg.Q, 0, 200, 200, 200,
-	}
-	new_sd:painted_shape(svg.winding_rule.non_zero, path:stroked(2), svg.solid_color(svg.color.black))
-
-	local new_scene = svg.scene(new_sd)
-
-	-- open a file to write our svg
-	local output = io.open('dump.svg', "w")
-
-	local window = svg.window(0,0,200,200)
-	local viewport = svg.viewport(0,0,200,200)
-
-	-- save our svg scene
-	svg.render(new_scene, window, viewport, output)
-
-	-- close the file
-	output:close()
-end
-
 ---------------------------------------
 ---------------------------------------
 -- CELL CLASS
@@ -94,7 +57,6 @@ end
 
 function Cell:free()
 	self.k = nil
-	if self.parent ~= nil then self.segments = nil end
 	self.numShapeSegments = nil
 	self.usefulShapes = nil
 	self.shortcutIn = nil
@@ -173,9 +135,9 @@ function Cell:getShortcut(segment)
 end
 
 function Cell:subdivide()
-	if #self.segments < 16 or self:size() < 8 or #self.usefulShapes < 4 or self.depth > 8 then return end
+	if #self.segments < 16 or #self.usefulShapes < 4 or self.depth > 4 then return end
 	--print("SUBDIVIDE", self.depth, self.index)
-	--if self.depth > 5 then return end
+	--if self.depth > 2 then return end
 
 	local segments = self.segments
 	local limits = self.limits
@@ -217,12 +179,12 @@ function Cell:subdivide()
 		end
 		if keyC ~= 2 then
 			for keyI,shortcut in pairs(self.shortcutIn) do
-				if shortcut.segment.initialPoint[2] < corner[2] then
+				if shortcut.segment.initialPoint[2] <= corner[2] then
 					newCell.k[shortcut.shapeIndex] = newCell.k[shortcut.shapeIndex] - 1
 				end
 			end
 			for keyO,shortcut in pairs(self.shortcutOut) do
-				if shortcut.segment.endPoint[2] < corner[2] then
+				if shortcut.segment.endPoint[2] <= corner[2] then
 					newCell.k[shortcut.shapeIndex] = newCell.k[shortcut.shapeIndex] + 1
 				end
 			end
@@ -274,12 +236,13 @@ end
 
 function Cell:printTree()
 	print("PRINT TREE")
-	if self.k ~= nil then
+	if self.k ~= nil and self.parent ~= nil then
 		print(table.unpack(self.k))
+		--print(table.unpack(self.parent.k))
 		print(table.unpack(self.limits))
 		for key,segment in pairs(self.segments) do
-			--print("initial", table.unpack(segment.segment.initialPoint))
-			--print("end",table.unpack(segment.segment.endPoint))
+			print("initial", table.unpack(segment.segment.initialPoint))
+			print("end",table.unpack(segment.segment.endPoint))
 		end
 	end
 	if self.shortcutIn ~= nil then print("shortcutIn"); print(#(self.shortcutIn)) end
@@ -1734,7 +1697,7 @@ function _M.accelerate(scene, window, viewport, args)
 
     local segments = {}
 
-
+--[[
     -- create a new scene data
     local new_sd = svg.scene_data()
 
@@ -1746,7 +1709,7 @@ function _M.accelerate(scene, window, viewport, args)
     -- save our svg scene
     svg.render(new_scene, window, viewport, output)
     output:close()
-
+--]]
 
     scene:get_scene_data():iterate{
         painted_shape = function(self, winding_rule, shape, paint)
